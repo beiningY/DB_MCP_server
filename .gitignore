@@ -1,0 +1,47 @@
+# Python bytecode / cache
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+htmlcov/
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+env/
+
+# UV (Python package manager)
+.uv/
+
+# Jupyter / IPython
+.ipynb_checkpoints/
+.python_history
+
+# Build / packaging
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# Logs / runtime
+*.log
+
+# OS / editor / IDE
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# Environment files / secrets
+.env
+.env.*
+
+# Conda
+*.conda
+
+
