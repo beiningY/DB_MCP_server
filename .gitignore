@@ -45,3 +45,5 @@ Thumbs.db
 *.conda
 
 LightRAG/*
+
+data/*
