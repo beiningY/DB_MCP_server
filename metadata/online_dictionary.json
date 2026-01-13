@@ -1,0 +1,465 @@
+{
+  "temp_cyc_202507301": {
+    "table_comment": "lenderapp数据汇报，用途：实现钉钉群定时数据发送，涉及：基于财务13，cyc_Loan_summary_app；财务钉钉群需求1，3:10:00"
+  },
+  "temp_cyc_202507302": {
+    "table_comment": "lenderapp中介顾问费数据汇总，用途：实现钉钉群定时数据发送，涉及：财务13；财务钉钉群需求2，3:20:00"
+  },
+  "temp_cyc_202507303": {
+    "table_comment": "放款数据汇报，用途：实现钉钉群定时数据发送，涉及：singa_bi.intermediate_2508281手动预算表，singa_bi.finance_exchange_rate，singa_bi.cyc_Loan_summary_app；财务钉钉群需求3，3:30:00"
+  },
+  "temp_cyc_202507304": {
+    "table_comment": "订单贷后数据汇报（原始3个投资人），用途：实现钉钉群定时数据发送，涉及：singa_bi.cyc_Loan_summary_app；财务钉钉群需求4，3:40:00"
+  },
+  "temp_cyc_202507305": {
+    "table_comment": "订单贷后数据汇报（TKG）npl，用途：实现钉钉群定时数据发送，涉及：singa_bi.cyc_Loan_summary_app；财务钉钉群需求5，3:50:00"
+  },
+  "temp_cyc_202507306": {
+    "table_comment": "订单贷后数据汇报TKG-放款数量、金额，涉及：singa_bi.cyc_Loan_summary_app；财务钉钉群需求6，4:00:00"
+  },
+  "temp_cyclone_072101": {
+    "table_comment": "pay_at近一年sgo_orders数据，用途：实现放款大横表数据，涉及：singa_bi.sgo_orders部分字段select建表，pay_at和repay_at合并一年，0:10:00"
+  },
+  "temp_cyclone_072103": {
+    "table_comment": "pay_at近一年sgo_orders数据取第一期财务数据，用途：实现放款大横表数据，涉及：singa_bi.temp_cyclone_072101，0:10:00"
+  },
+  "temp_cyclone_072104": {
+    "table_comment": "pay_at近一年sgo_orders数据取第二期财务数据，用途：实现放款大横表数据，涉及：singa_bi.temp_cyclone_072101，0:10:00"
+  },
+  "temp_cyclone_072105": {
+    "table_comment": "pay_at近一年sgo_orders数据取第三期财务数据，用途：实现放款大横表数据，涉及：singa_bi.temp_cyclone_072101，0:10:00"
+  },
+  "temp_cyclone_072106": {
+    "table_comment": "pay_at近一年sgo_orders数据取第四期财务数据，用途：实现放款大横表数据，涉及：singa_bi.temp_cyclone_072101，0:10:00"
+  },
+  "temp_cyclone_250710": {
+    "table_comment": "singa_bi.sg_appsflyer_push_new的近四天部分埋点，用途：漏斗1自动化"
+  },
+  "temp_cyclone_250729": {
+    "table_comment": "singa_bi.sg_appsflyer_push_new的近三十天部分埋点，用途：漏斗2自动化"
+  },
+  "temp_cyclone_2507111": {
+    "table_comment": "singa_bi.sg_appsflyer_push_new的近四天部分埋点加上user_id和处理，用途：漏斗1自动化"
+  },
+  "temp_cyclone_2507291": {
+    "table_comment": "singa_bi.temp_cyclone_250729在此基础上加上user_id和处理，用途：漏斗2自动化"
+  },
+  "funnel": {
+    "table_comment": "印尼,漏斗1的自动化，用途：漏斗1自动化结果；漏斗表"
+  },
+  "temp_rc_model_daily": {
+    "table_comment": "订单详情汇总，用途：订单数据汇总中间表；只包含主订单；中间表：包含用户从申请到还款全链路的关键状态和时间戳 (早上5点更新)",
+    "columns": {
+      "machine_status": "枚举值：1；含义：Newloan RC M1%的分子通过条件",
+      "machine_status_0": "1是风控初审通过",
+      "machine_status_1": "1是终审通过",
+      "mgmt": "管理费"
+    }
+  },
+  "temp_cyc_202508041": {
+    "table_comment": "sgo_orders表pay_at和repay_at双字段近一年数据，0:10:00"
+  },
+  "Loan_summary()": {
+    "table_comment": "sgo_orders近一年拼接各期数据表汇总，0:10:00"
+  },
+  "cyc_Loan_summary_app": {
+    "table_comment": "放款大横表，1:10:00"
+  },
+  "YN放款订单总表": {
+    "table_comment": "redash版，备注：加放款渠道"
+  },
+  "放款订单-不含展期": {
+    "table_comment": "原始redash，备注：app的保费加到管理费里，加放款渠道"
+  },
+  "intermediate_2508141": {
+    "table_comment": "放款订单后台模版（每天删除插入最新一天数据），6:20:00"
+  },
+  "intermediate_2508142": {
+    "table_comment": "还款订单后台模版（每天删除插入最新一天数据），6:20:00"
+  },
+  "intermediate_2508251": {
+    "table_comment": "query-财务还款订单进行自动化，备注：还款模版表在其后面刷，0:10:00"
+  },
+  "intermediate_2508252": {
+    "table_comment": "invested_orders表自动化，2:20:00"
+  },
+  "intermediate_2508281": {
+    "table_comment": "财务手动插入数据源------->预算表"
+  },
+  "intermediate_table_2508081": {
+    "table_comment": "sgo_orders表apply_at在近40天的部分字段，3:20:00"
+  },
+  "finance_exchange_rate": {
+    "table_comment": "wh-印尼、中汇率；汇率表"
+  },
+  "transaction": {
+    "table_comment": "",
+    "columns": {
+      "status": "筛选条件：invalid = 0 and status = 1；含义：投资成功；时间口径：COALESCE(date(finished_at),date(updated_at))",
+      "type": "枚举值：101；含义：invest投资；时间口径：COALESCE(date(finished_at),date(updated_at))；备注：case when '101' then 'Invest' ...；枚举值：102；含义：auto-invest自投资；时间口径：COALESCE(date(finished_at),date(updated_at))；枚举值：201 (对应lender_collection_return type=1)；含义：paid_off return还款收益 back amount；时间口径：COALESCE(date(finished_at),date(updated_at))；枚举值：202 / 2；含义：rollover return展期费收益；时间口径：COALESCE(date(finished_at),date(updated_at))；枚举值：203 / 4；含义：waived return弃权收益；时间口径：COALESCE(date(finished_at),date(updated_at))；枚举值：204；含义：?投资失败；时间口径：COALESCE(date(finished_at),date(updated_at))；枚举值：205；含义：referral reward/commission推荐收益；时间口径：COALESCE(date(finished_at),date(updated_at))；枚举值：206；含义：cashback返现收益；时间口径：COALESCE(date(finished_at),date(updated_at))；枚举值：301；含义：top_up充值；时间口径：COALESCE(date(finished_at),date(updated_at))；备注：金额都是amount"
+    }
+  },
+  "lender_withdrawal": {
+    "table_comment": "",
+    "columns": {
+      "status": "枚举值：1；含义：提现中金额；枚举值：3；含义：？陈：提交成功",
+      "account_name": ""
+    }
+  },
+  "lender_invitation_daily_reward": {
+    "table_comment": "",
+    "columns": {
+      "status": "枚举值：'1'；含义：?",
+      "awardee_id": "含义：得到佣金的人",
+      "invitee_id": "含义：被邀请的人"
+    }
+  },
+  "borrow_order": {
+    "table_comment": "",
+    "columns": {
+      "parent_id": "枚举值：0；含义：*主订单 （子订单>0)必考虑；枚举值：0；含义：主订单",
+      "loan_principal": "含义：取每个明细单子的合同金额；备注：满足parent_id = 0 and had_waived = 0时，区别于transaction里面整单的金额,并且现在包含保费",
+      "investment_status": "枚举值：9；含义：投资成功",
+      "is_expired": "枚举值：0；含义：订单未失效；枚举值：1；含义：订单由于回收到后台或者放款失败而失效；枚举值：0；含义：订单是否已经失效，1已失效 0未失效",
+      "outstanding": "逻辑：case when parent_id = 0 AND had_waived = 0 AND loan_status IN (1,2) AND investment_status = 9 and is_expired=0 then loan_principal else 0 end；含义：提取实时在投金额",
+      "loan_status": "枚举值：IN (1、2、3、4、5)",
+      "pre_rollover_id": "枚举值：!=0；含义：发生展期，则会在这一列标注展期前的订单号；备注：提取出展期的部分且不为展期首单。被展期的loan_status为4且order_status=93，最后一个展期会随状态发生变化",
+      "assets_transit": "逻辑：case when investment_status in (7, 8, 124, 125, 127) and parent_id=0 and had_waived=0 and loan_status=0 then loan_principal else 0 end；含义：放款中",
+      "investment_due_date": "含义：投资端的产品到期日期",
+      "investment_product_id": "含义：<=10 旧产品,否则新产品；含义：该借款订单，来自于的对应的lender app投资人选的产品",
+      "product_id": "含义：借款人选的借款产品",
+      "insurance_fee": "逻辑：select order_id,sum(a.insurance_fee)...；含义：借款端根据订单查保费；逻辑：select lender_id,sum(a.insurance_fee)...；含义：投资端投资人保费；含义：借款端保费 select order_id,sum(a.insurance_fee)...",
+      "investment_paid_at": "含义：保费预扣时间(又说收益以这个时间为准）",
+      "paid_at": "含义：保费实际扣款时间",
+      "daily_return_rate": "含义：日利率，要求年利率：concat(round(a.daily_return_rate * 365 / 100, 1),'%')"
+    }
+  },
+  "sgo_orders": {
+    "table_comment": "借款端表；订单表，可定义坏账和展期",
+    "columns": {
+      "parent_order_id": "含义：主订单的id就是其子订单的parent_order_id，主订单的parent_order_id是0；筛选：parent_order_id=0 and order_type=2；含义：*有五条数据只有为0代表主订单（且分期）；筛选：parent_order_id=0，id按照先后顺序分别对应1-4期；含义：1-4各期的明细",
+      "order_type": "枚举值：IN (1,2)；含义：（单期，分期）；枚举值：2；含义：分期；枚举值：4；含义：展期；枚举值：1；含义：单期；4是展期的子订单；2有付款是展期主订单（状态93下），没有付款的是取消订单",
+      "order_status": "枚举值：9；备注：有对应的表在后面，但没有等于9的；展期筛选逻辑：若a展期b展期c，a/b/c初始order_type=2。展期发生后，a、b状态变为93 (取消)。若只统计最后c的费用(不重复统计)，需筛选：order_status in (40,90) and order_type = 2；展期费说明：order_type=4 记录展期费；展期逾期时，需同时缴纳3项费用：展期费、罚息、利息；枚举值：1；含义：申请；枚举值：2；含义：提交；枚举值：10；含义：在风险控制队列中；枚举值：11；含义：在信息审核队列中；枚举值：12；含义：在最终审核队列中；枚举值：13；含义：等待放款；枚举值：14；含义：在 BPJS队列中；枚举值：20；含义：风险控制检查通行证；枚举值：21；含义：信息审核通过；枚举值：22；含义：最终审核通过；枚举值：23；含义：放款成功；枚举值：24；含义：BPJS 审核通过；枚举值：40；含义：还款中；枚举值：41；含义：还款成功；枚举值：42；含义：部分偿还成功；枚举值：43；含义：展期中；枚举值：50；含义：等待信息审查；枚举值：51；含义：等待最终审核；枚举值：52；含义：等待BPJS审核；枚举值：60；含义：偿还失败；枚举值：61；含义：放款支付失败；枚举值：90；含义：已结清；枚举值：91；含义：信息审查拒绝；枚举值：92；含义：最终审查拒绝；枚举值：93；含义：取消订单（含被展期的旧订单）；枚举值：94；含义：风险控制检查拒收；枚举值：95；含义：(无描述/预留)；枚举值：103；含义：等待用户电子签名",
+      "repayment_status": "枚举值：0；含义：va还款初始状态；枚举值：3；含义：还款成功",
+      "expire_at": "含义：应还日期",
+      "due_amount": "含义：应还金额",
+      "penalty_amount": "含义：罚息不计入应还",
+      "repay_at": "含义：实还日期",
+      "repayment_amount": "含义：实还金额",
+      "pay_at": "含义：实际放款日期；放款记录 (印尼时间)，不代表最终放款成功，需结合status判断",
+      "payment_amount": "含义：放款金额",
+      "contract_amount": "含义：成本",
+      "?": "含义：借款产品的申请时间",
+      "mgmtfee_amount": "含义：管理费，在放款订单-不含展期里面还包含了保费",
+      "service_package_total_amount": "含义：增值服务费",
+      "expire_at / repay_at": "印尼时间",
+      "created_at / updated_at": "尼日时间"
+    }
+  },
+  "sgo_orders_extension": {
+    "table_comment": "",
+    "columns": {
+      "after_order_id": "枚举值：0；含义：非展期订单；枚举值：!=0；含义：展期订单，其订单号与sgo_orders的id一致",
+      "before_order_id": "枚举值：0；含义：无展期前订单；枚举值：!=0；含义：显示展期前订单，与sgo_orders的id连接",
+      "order_id": "含义：通过这个连接sgo_orders的id找到这笔展期前订单发生的展期费due_amount以及发生展期费的时间repay_at"
+    }
+  },
+  "led_users": {
+    "table_comment": "",
+    "columns": {
+      "deleted_at": "筛选：is null；含义：lender_app有效的注册信息，id主键",
+      "membership_level": "含义：每个会员规定等级，等同于lender_membership_level_config的id"
+    }
+  },
+  "led_users_personal_infos": {
+    "table_comment": "",
+    "columns": {
+      "kpt_number": "筛选：!=\"\"；含义：lender_app有效的完善资料环节信息，uid主键"
+    }
+  },
+  "investment_order": {
+    "table_comment": "",
+    "columns": {
+      "status": "枚举值：in (9,10)；含义：lender_app投资成功，主键为lender_id",
+      "insurance_fee": "含义：投资端保费 select sum(insurance_fee)..."
+    }
+  },
+  "lender_collection_return": {
+    "table_comment": "",
+    "columns": {
+      "status": "枚举值：in (2, 9)；含义：投资成功",
+      "type": "枚举值：1；含义：settled；枚举值：2；含义：rollovered；枚举值：4；含义：waived"
+    }
+  },
+  "led_invest": {
+    "table_comment": "",
+    "columns": {
+      "pre_rollover_order_id": "枚举值：0；含义：非展期订单；枚举值：！=0；含义：展期订单",
+      "invest_status": "枚举值：2；含义：代表投资成功(计算投资金额的时候筛选的)",
+      "invest_id": "含义：链接led_users的id,相当于lender_id；筛选：in (37420,37421) and invest_status=2；含义：投资成功且不是TKG投资人的订单",
+      "order_status": "枚举值：in (40,90,93)；备注：不要随便加，可能剔除掉一些状态"
+    }
+  },
+  "sgo_repayments": {
+    "table_comment": "还款表: 记录每一笔成功的还款流水，计算收入核心",
+    "columns": {
+      "repayment_type": "枚举值：3",
+      "repayment_va": "含义：用户使用的临时还款用的虚拟账户",
+      "repayment_status": "含义：放款成功？"
+    }
+  },
+  "users": {
+    "table_comment": "用户表: 存储最基础的用户注册信息，是所有分析的起点",
+    "columns": {
+      "created_at": "含义：用户注册时间（借款端用户信息）"
+    }
+  },
+  "singa_lender_led_users": {
+    "table_comment": "",
+    "columns": {
+      "lender_id": "含义：对应的人的情况，投资端用户信息(和借款端用mobile phone)确认同一人",
+      "id": "含义：用户id",
+      "created_at": "含义：注册时间",
+      "membership_level": "含义：1regular, 2premier, 3vip, 4vvip"
+    }
+  },
+  "led_users_referral_infos": {
+    "table_comment": "",
+    "columns": {
+      "user_id": "含义：投资人(被邀请人)",
+      "inviter_user_id": "含义：0是没有，非零是邀请人id",
+      "first_reward_rate": "含义：邀请人----能得到的佣金比例"
+    }
+  },
+  "lender_wallet_account": {
+    "table_comment": "",
+    "columns": {
+      "balance": "",
+      "frozen_balance": ""
+    }
+  },
+  "lender_periodicity_return_detail": {
+    "table_comment": "",
+    "columns": {
+      "loan_order_id": "含义：和borrower_order的id相关",
+      "stutes": "枚举值：2；含义：固定期限产品筛选条件",
+      "return_at": "含义：为收益时间",
+      "amount": "含义：固定期限---》收益加本金；备注：非固定期限---lender_collection_return表的returned",
+      "profit": "含义：纯利润 returnable_profit",
+      "principal": "含义：本金 returnable_principal"
+    }
+  },
+  "sgo_order_invest_bypass": {
+    "table_comment": "",
+    "columns": {
+      "investment_platform": "枚举值：0；含义：lender后台筛选；枚举值：1；含义：lender app筛选",
+      "order_id": "含义：作为主订单id"
+    }
+  },
+  "deliver": {
+    "table_comment": "投放数据表；记录了每个agency和channel花了多少钱",
+    "columns": {
+      "attributed_date": "含义：归因日期；示例：2023/10/25 0:00:00",
+      "platform": "含义：平台Android/iOS；示例：iOS",
+      "showcase": "含义：展示数；示例：123",
+      "click": "含义：点击数；示例：100",
+      "agency": "含义：代理名称；示例：google",
+      "channel": "含义：渠道名称；示例：wechat",
+      "media_source": "含义：媒体来源；示例：youtube",
+      "campaign": "含义：活动名称；示例：invest",
+      "cost": "含义：投放消耗金额（美元）；示例：1000",
+      "installed": "含义：激活数量；示例：22",
+      "first_open": "含义：安装数；示例：12",
+      "registered": "含义：注册数；示例：11",
+      "apply": "含义：申请数",
+      "applied": "含义：申请提交成功数；示例：10",
+      "passed": "含义：风控通过数；示例：9",
+      "passed_event": "含义：风控事件次数；示例：9",
+      "passed_premium": "含义：高质量人群风控通过数；示例：8",
+      "passed_first": "含义：首次风控通过；示例：6",
+      "disbursed": "含义：放款成功数；示例：3",
+      "value": "含义：用户价值（美元）；示例：1200",
+      "register_pay": "含义：当日注册下款数；示例：5",
+      "first_order_pay": "含义：首次下款数；示例：3",
+      "order_pay": "含义：下款数；示例：3"
+    }
+  },
+  "approval_info": {
+    "table_comment": "审批信息表: 存储了与订单相关联的风控审批细节",
+    "columns": {
+      "order_id": "含义：风控通过量 (COUNT DISTINCT)",
+      "created_at": "含义：风控决策时间 (SUBSTR(created_at,1,10))",
+      "type": "枚举值：0；含义：风控",
+      "machine_status": "枚举值：1；含义：通过",
+      "apply_product": "枚举值：in (91,95)；含义：蝌蚪贷"
+    }
+  },
+  "investment_product": {
+    "table_comment": "",
+    "columns": {
+      "investment_product_config_id": "筛选：in(select id from investment_product_config where term_type=2)；含义：固定期限产品筛选条件",
+      "status": "枚举值：0是上线，1是下线产品"
+    }
+  },
+  "sgo_order_other_expenses": {
+    "table_comment": "",
+    "columns": {
+      "electronic_signature_fees": "含义：电子合同金额"
+    }
+  },
+  "sgo_user_bank_info_snaps": {
+    "table_comment": "",
+    "columns": {
+      "ref_bank_id": "含义：借款端的银行信息,用order_id链接订单"
+    }
+  },
+  "ref_bank": {
+    "table_comment": "",
+    "columns": {
+      "id": "含义：与ref_bank_id连接"
+    }
+  },
+  "sgp_permata_flows": {
+    "table_comment": "",
+    "columns": {
+      "bank_channel": "含义：ea打钱到用户手上的银行，要满足path='escrow => borrower'的条件"
+    }
+  },
+  "所有表的": {
+    "table_comment": "",
+    "columns": {
+      "product_id": "含义：新客你就写91，95，老客你写92，93，94，97，98"
+    }
+  },
+  "sg_member_coupon": {
+    "table_comment": "印尼优惠券使用情况记录；(备注)",
+    "columns": {
+      "level_id": "枚举值：0；含义：代表等级最低，没有满足前提条件；代表用户等级，数字越大质量越好，对应成长权益",
+      "status": "0是未使用；2是手动失效；3是已使用",
+      "coupon_id": "配置的时候自动生成，可以用这个分次看活动的发券情况"
+    }
+  },
+  "lender_daily_asset_snapshot": {
+    "table_comment": "",
+    "columns": {
+      "funding_principal": "含义：outstanding历史数据，每天的取snapshot_version最大的那条"
+    }
+  },
+  "pl_customer_basic_info": {
+    "table_comment": "供应商做的表，尼日未复制",
+    "columns": {
+      "user_id": "含义：等价于users.id",
+      "regist_time": "含义：等价于users.created_at"
+    }
+  },
+  "尼日时区相关问题": {
+    "table_comment": "",
+    "columns": {
+      "timestamp": "备注：从生产库到BI库，会出现自动+6的现象（转成印尼时区），现在要变成尼日时间就应该-6；+1就是印尼变成国内。所有的表都以当地时间为准显示"
+    }
+  },
+  "sg_user_personal_infos": {
+    "table_comment": "",
+    "columns": {
+      "created_at": "时区: 印尼"
+    }
+  },
+  "sg_appsflyer_push_new": {
+    "table_comment": "埋点表",
+    "columns": {
+      "created_at": "时区: 印尼",
+      "updated_at": "时区: 印尼",
+      "event_name": "枚举：'install', 'verify_phone_number', 'phone_not_exist', 'start_input_info', 'loan_apply_click'"
+    }
+  },
+  "bi_T1_001_customer_flow_process_daily_v3": {
+    "table_comment": "供应商做的表，尼日未复制"
+  },
+  "sg_member": {
+    "table_comment": "可以聚合归因渠道、uid和注册时间；没有数据，是一张空表"
+  },
+  "is_send_sms_log": {
+    "table_comment": "既有WhatsApp又有短信的记录；备注：nextotp的platform需要看这个，但是没有计费能力（看不到segment或者part，不知道实际的发送条数）；短信记录",
+    "columns": {
+      "provider": "AliWaText(阿里云WA回复), AliWaTplMKT(阿里云WA营销), InfinityMarkingSms/NoticeSms/OptSms, NextOTP, NxCodeSms/InformSms/MarketingSms/WaText/WaTpl"
+    }
+  },
+  "ds_sms_log": {
+    "table_comment": "完整的新建表，有计费能力，可以拼接使用"
+  },
+  "is_notice_send_log": {
+    "table_comment": "还在用，记录了infinity&nx；WhatsApp的信息记录",
+    "columns": {
+      "message_template": "app_reg_and_login_otp 是otp发送的环节",
+      "phone": "国际格式",
+      "supplier": "infinity和Nxtele (infinity在11月4日之后不用了)",
+      "channel_type": "有四种，主要是认证和营销"
+    }
+  },
+  "sgo_order_extension": {
+    "table_comment": "展期订单表"
+  },
+  "collection_ng_task_logs": {
+    "table_comment": "催收任务日志表：记录催收系统中的任务分配和处理日志",
+    "columns": {
+      "assigned_to": "催收员ID",
+      "collection_level_id": "催收级别ID。用于区分不同的催收队列（如T0, D1等）",
+      "type": "日志类型。type = 3 代表“任务分配”"
+    }
+  },
+  "sg_user_rejected": {
+    "table_comment": "拒绝记录表"
+  },
+  "notice": {
+    "table_comment": "消息发送日志表"
+  },
+  "opt_marketing_phone": {
+    "table_comment": "导入名单表"
+  },
+  "sgo_user_personal_info_snaps": {
+    "table_comment": "注册过的电话但是不一定是注册用户"
+  },
+  "marketing_import_data": {
+    "table_comment": "营销导入数据"
+  },
+  "marketing_nx_phone_logs": {
+    "table_comment": "nx标记（测试表）",
+    "columns": {
+      "message_by_human": "记录notes"
+    }
+  },
+  "marketing_send_airudder_logs": {
+    "table_comment": "airudder记录",
+    "columns": {
+      "plan_name": "对应plan，也有scheduler_id"
+    }
+  },
+  "marketing_send_ivr_logs": {
+    "table_comment": "ivr记录",
+    "columns": {
+      "user_id / provider": "provider是供应商名字"
+    }
+  },
+  "marketing_send_sms_log": {
+    "table_comment": "营销短信记录",
+    "columns": {
+      "type_of_user": "能看到是导入用户",
+      "provider_name": "供应商用户"
+    }
+  },
+  "whatsapp_sms_record": {
+    "table_comment": "老的催收表，已经不用"
+  },
+  "marketing_send_wa_logs": {
+    "table_comment": "waba记录"
+  },
+  "ds_ali_sms_log": {
+    "table_comment": "尼日阿里云短信记录",
+    "columns": {
+      "phone": "国际格式（234……）",
+      "callback": "1是成功；2是失败，0是还没回来",
+      "sms_size": "发送出去几条",
+      "created_at": "datetime存储"
+    }
+  }
+}

@@ -1,9 +1,48 @@
 [project]
 name = "db-server"
 version = "0.1.0"
-description = "Add your description here"
+description = "MCP Server with remote connection support via SSE"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
+    # MCP 核心
     "mcp[cli]>=1.25.0",
+    "uvicorn>=0.30.0",
+    "starlette>=0.38.0",
+    "sse-starlette>=2.0.0",
+    
+    # HTTP 客户端
+    "httpx>=0.27.0",
+    "requests>=2.32.5",
+    
+    # 数据处理
+    "pydantic>=2.0.0",
+    "sqlalchemy>=2.0.45",
+    "pymysql>=1.1.2",
+    "pandas>=2.0.0",
+    
+    # LLM 和 Agent
+    "openai>=2.14.0",
+    "langchain>=0.3.0",
+    "langchain-core>=0.3.0",
+    "langchain-openai>=0.2.0",
+    "langgraph>=0.2.0",
+    
+    # 工具库
+    "python-dotenv>=1.2.1",
+    "google-api-python-client>=2.187.0",
+    "httplib2>=0.31.0",
+    "sqlglot>=28.5.0",
+    "tqdm>=4.67.1",
+    "nest-asyncio>=1.6.0",
 ]
+
+[project.scripts]
+db-server = "server:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["server.py", "tools", "resources"]

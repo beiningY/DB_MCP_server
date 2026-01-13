@@ -1,0 +1,223 @@
+{
+  "description": "知识图谱评估问题集 - 基于 Redash 历史查询设计",
+  "created_at": "2026-01-08",
+  "total_questions": 20,
+  "categories": [
+    "成本分析",
+    "转化率分析",
+    "漏斗分析",
+    "获客分析",
+    "贷后监控",
+    "催收分析",
+    "放款分析",
+    "数据监控"
+  ],
+  "questions": [
+    {
+      "id": 1,
+      "question": "如何查询 IVR 的成本？需要用到哪些表？",
+      "category": "成本分析",
+      "difficulty": "easy",
+      "expected_tables": ["send_infinity_ivr_logs", "send_ivr_logs", "marketing_tasks_v3"],
+      "reference_query_id": 2131,
+      "reference_query_name": "COST IVR",
+      "hypothesis":""
+    },
+    {
+      "id": 2,
+      "question": "SMS 发送成本如何计算？不同供应商的单价是多少？",
+      "category": "成本分析",
+      "difficulty": "medium",
+      "expected_tables": ["send_sms_logs", "collection_v2_sms_logs"],
+      "reference_query_id": 2133,
+      "reference_query_name": "COST SMS",
+      "hypothesis":""
+    },
+    {
+      "id": 3,
+      "question": "WhatsApp 消息的费用是如何计算的？NX 和 Infinity 供应商的单价分别是多少？",
+      "category": "成本分析",
+      "difficulty": "medium",
+      "expected_tables": ["send_wa_logs"],
+      "reference_query_id": 2134,
+      "reference_query_name": "COST WA",
+      "hypothesis":""
+    },
+    {
+      "id": 4,
+      "question": "GPT 外呼的成本记录在哪个表？单次调用费用是多少？",
+      "category": "成本分析",
+      "difficulty": "easy",
+      "expected_tables": ["send_gpt_logs", "marketing_tasks_v3"],
+      "reference_query_id": 2132,
+      "reference_query_name": "COST GPT",
+      "hypothesis":""
+    },
+    {
+      "id": 5,
+      "question": "如何统计注册用户到填写银行信息的转化率？T0、T7、B1、B2 分别代表什么？",
+      "category": "转化率分析",
+      "difficulty": "hard",
+      "expected_tables": ["singa_redash.pl_customer_basic_info", "sg_user_bank_infos"],
+      "reference_query_id": 2128,
+      "reference_query_name": "注册到银行的转化",
+      "hypothesis":""
+    },
+    {
+      "id": 6,
+      "question": "从产品额度确认到借款申请的转化流程是怎样的？涉及哪些表？",
+      "category": "转化率分析",
+      "difficulty": "hard",
+      "expected_tables": ["sg_appsflyer_push_new", "sg_user_uuids", "temp_rc_model_daily"],
+      "reference_query_id": 2086,
+      "reference_query_name": "产品额度确认到申请",
+      "hypothesis":""
+    },
+    {
+      "id": 7,
+      "question": "用户从联系人填写到借款申请的转化率怎么计算？",
+      "category": "转化率分析",
+      "difficulty": "medium",
+      "expected_tables": ["sg_user_contact_infos", "temp_rc_model_daily"],
+      "reference_query_id": 2084,
+      "reference_query_name": "联系人到申请",
+      "hypothesis":""
+    },
+    {
+      "id": 8,
+      "question": "借款人 APP 的核心漏斗有哪些步骤？从安装到放款成功的完整流程是什么？",
+      "category": "漏斗分析",
+      "difficulty": "hard",
+      "expected_tables": ["funnel"],
+      "reference_query_id": 2074,
+      "reference_query_name": "Borrower app core funnel trend_ng",
+      "hypothesis":""
+    },
+    {
+      "id": 9,
+      "question": "漏斗数据中 loan_apply_click 事件代表什么业务含义？",
+      "category": "漏斗分析",
+      "difficulty": "easy",
+      "expected_tables": ["funnel", "sg_appsflyer_push_new"],
+      "reference_query_id": 2074,
+      "reference_query_name": "Borrower app core funnel trend_ng",
+      "hypothesis":""
+    },
+    {
+      "id": 10,
+      "question": "如何统计各渠道的获客成本（CPS、CPI、CPA）？",
+      "category": "获客分析",
+      "difficulty": "hard",
+      "expected_tables": ["singa_bi_ng.deliver"],
+      "reference_query_id": 2073,
+      "reference_query_name": "Customer acquisition report_ng",
+      "hypothesis":""
+    },
+    {
+      "id": 11,
+      "question": "organic 和非 organic 渠道的获客数据存在哪个表？",
+      "category": "获客分析",
+      "difficulty": "easy",
+      "expected_tables": ["deliver"],
+      "reference_query_id": 2073,
+      "reference_query_name": "Customer acquisition report_ng",
+      "hypothesis":""
+    },
+    {
+      "id": 12,
+      "question": "FPD（首逾率）是如何计算的？按哪些维度进行分析？",
+      "category": "贷后监控",
+      "difficulty": "hard",
+      "expected_tables": ["temp_rc_model_daily", "sgo_orders"],
+      "reference_query_id": 1162,
+      "reference_query_name": "FPD% by due date_ng",
+      "hypothesis":""
+    },
+    {
+      "id": 13,
+      "question": "DPD 和 NPL 率是通过哪些表计算的？",
+      "category": "贷后监控",
+      "difficulty": "medium",
+      "expected_tables": ["temp_rc_model_daily", "sgo_orders"],
+      "reference_query_id": 1013,
+      "reference_query_name": "DPD NPL% by due day_ng",
+      "hypothesis":""
+    },
+    {
+      "id": 14,
+      "question": "催收渠道有哪些？各渠道的成本数据存在哪些表？",
+      "category": "催收分析",
+      "difficulty": "medium",
+      "expected_tables": ["collection_v2_channel_report_infinity_phone_call", "collection_v2_channel_report_nx_link_call", "collection_v2_sms_logs", "collection_v2-schedule_batches"],
+      "reference_query_id": 2092,
+      "reference_query_name": "Grand Total (Exc. WABA (Core))",
+      "hypothesis":""
+    },
+    {
+      "id": 15,
+      "question": "WABA Core 催收的费用是如何计算的？涉及哪些表？",
+      "category": "催收分析",
+      "difficulty": "medium",
+      "expected_tables": ["gpt_agent_order_info", "sessions", "messages"],
+      "reference_query_id": 2091,
+      "reference_query_name": "WABA (Core)",
+      "hypothesis":""
+    },
+    {
+      "id": 16,
+      "question": "按产品维度统计放款金额需要用到哪个表？",
+      "category": "放款分析",
+      "difficulty": "easy",
+      "expected_tables": ["temp_rc_model_daily"],
+      "reference_query_id": 2076,
+      "reference_query_name": "Disburse by product_ng",
+      "hypothesis":""
+    },
+    {
+      "id": 17,
+      "question": "如何查询每小时的放款申请量和通过量？",
+      "category": "放款分析",
+      "difficulty": "medium",
+      "expected_tables": ["temp_rc_model_daily"],
+      "reference_query_id": 999,
+      "reference_query_name": "Application by hour_ng",
+      "hypothesis":""
+    },
+    {
+      "id": 18,
+      "question": "数据成本监控涉及哪些第三方服务？费用如何计算？",
+      "category": "数据监控",
+      "difficulty": "hard",
+      "expected_tables": ["order_izi_id_query", "slik_report_order", "user_face_recognition"],
+      "reference_query_id": 1182,
+      "reference_query_name": "Data cost monitor_ng",
+      "hypothesis":""
+    },
+    {
+      "id": 19,
+      "question": "风控通过率（RC Pass Rate）如何按标签分组统计？",
+      "category": "贷后监控",
+      "difficulty": "medium",
+      "expected_tables": ["temp_rc_model_daily"],
+      "reference_query_id": 1328,
+      "reference_query_name": "Passed% by RC tag_ng",
+      "hypothesis":""
+    },
+    {
+      "id": 20,
+      "question": "B2B 和 B2C 商户交易数据分别存在哪些表？如何区分？",
+      "category": "数据监控",
+      "difficulty": "medium",
+      "expected_tables": ["sfp_bank_api_transaction_prepay_order"],
+      "reference_query_id": 1715,
+      "reference_query_name": "Merchant Transaction B2C"
+    }
+  ],
+  "evaluation_metrics": {
+    "accuracy": "回答是否正确识别了相关的表和字段",
+    "completeness": "回答是否包含了所有必要的信息",
+    "relevance": "回答是否与问题直接相关",
+    "sql_quality": "如果生成SQL，语法和逻辑是否正确"
+  }
+}
+

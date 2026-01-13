@@ -44,4 +44,4 @@ Thumbs.db
 # Conda
 *.conda
 
-
+LightRAG/*
