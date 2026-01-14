@@ -5,6 +5,7 @@ MCP Server 核心模块
 import argparse
 import asyncio
 import logging
+import os
 from contextlib import asynccontextmanager
 from typing import Any
 
@@ -52,6 +53,7 @@ class MCPServerApp:
                 redash_api_key=os.getenv("REDASH_API_KEY"),
                 llm_model=os.getenv("LLM_MODEL", "gpt-4"),
                 llm_api_key=os.getenv("LLM_API_KEY"),
+                llm_base_url=os.getenv("LLM_BASE_URL"),
                 lightrag_url=os.getenv("LIGHTRAG_API_URL")
             )
             logger.info("✓ 数据分析师 Agent 初始化成功")

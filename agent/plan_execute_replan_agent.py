@@ -1,3 +1,4 @@
+import os
 import operator
 from typing import Annotated, List, Tuple
 from typing_extensions import TypedDict
@@ -22,6 +23,19 @@ class Plan(BaseModel):
 
 
 from langchain_core.prompts import ChatPromptTemplate
+from langchain_openai import ChatOpenAI
+
+# 从环境变量读取LLM配置
+llm_model = os.getenv("LLM_MODEL", "gpt-4")
+llm_base_url = os.getenv("LLM_BASE_URL")
+llm_api_key = os.getenv("LLM_API_KEY")
+
+# 构建LLM参数
+llm_kwargs = {"model": llm_model, "temperature": 0}
+if llm_api_key:
+    llm_kwargs["api_key"] = llm_api_key
+if llm_base_url:
+    llm_kwargs["base_url"] = llm_base_url
 
 planner_prompt = ChatPromptTemplate.from_messages(
     [
@@ -34,9 +48,7 @@ The result of the final step should be the final answer. Make sure that each ste
         ("placeholder", "{messages}"),
     ]
 )
-planner = planner_prompt | ChatOpenAI(
-    model="gpt-4.1", temperature=0
-).with_structured_output(Plan)
+planner = planner_prompt | ChatOpenAI(**llm_kwargs).with_structured_output(Plan)
 
 planner.invoke(
     {
@@ -85,9 +97,7 @@ Update your plan accordingly. If no more steps are needed and you can return to 
 )
 
 
-replanner = replanner_prompt | ChatOpenAI(
-    model="gpt-4o", temperature=0
-).with_structured_output(Act)
+replanner = replanner_prompt | ChatOpenAI(**llm_kwargs).with_structured_output(Act)
 
 
 from typing import Literal

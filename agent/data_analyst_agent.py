@@ -11,7 +11,7 @@ from typing_extensions import TypedDict
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage, SystemMessage
 from langgraph.graph import StateGraph, END, START
-from langgraph.prebuilt import create_react_agent
+from langgraph.prebuilt import create_agent
 
 from pydantic import BaseModel, Field
 
@@ -229,7 +229,7 @@ class DataAnalystAgent:
             langchain_tools.append(lc_tool)
         
         # 创建 ReAct Agent
-        self.agent_executor = create_react_agent(
+        self.agent_executor = create_agent(
             self.llm,
             langchain_tools,
             state_modifier=AGENT_EXECUTOR_SYSTEM_PROMPT
@@ -372,6 +372,7 @@ def create_data_analyst_agent(
     redash_api_key: Optional[str] = None,
     llm_model: str = "gpt-4",
     llm_api_key: Optional[str] = None,
+    llm_base_url: Optional[str] = None,
     lightrag_url: Optional[str] = None
 ) -> DataAnalystAgent:
     """
@@ -383,21 +384,26 @@ def create_data_analyst_agent(
         redash_api_key: Redash API 密钥
         llm_model: LLM 模型名称
         llm_api_key: LLM API 密钥
+        llm_base_url: LLM API Base URL（可选，用于代理或私有部署）
         lightrag_url: LightRAG 服务地址
     
     Returns:
         DataAnalystAgent 实例
     """
+    llm_config = {
+        'model': llm_model,
+        'api_key': llm_api_key
+    }
+    if llm_base_url:
+        llm_config['base_url'] = llm_base_url
+    
     return DataAnalystAgent(
         mysql_config={'db_url': mysql_url} if mysql_url else {},
         redash_config={
             'redash_url': redash_url,
             'api_key': redash_api_key
         } if redash_url and redash_api_key else {},
-        llm_config={
-            'model': llm_model,
-            'api_key': llm_api_key
-        },
+        llm_config=llm_config,
         lightrag_config={
             'api_url': lightrag_url
         } if lightrag_url else {}
