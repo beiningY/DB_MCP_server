@@ -54,7 +54,7 @@ async def test_lightrag_client():
         
         # 测试搜索
         result = await client.search("放款金额统计", mode="hybrid", top_k=3)
-        print(f"✓ 搜索结果: {result.get('total', 0)} 个")
+        print(f"✓ 搜索结果: {result.get('response')} ")
     else:
         print("⚠️ LightRAG 服务不可用（可能未启动）")
 

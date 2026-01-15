@@ -11,7 +11,7 @@ from typing_extensions import TypedDict
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage, SystemMessage
 from langgraph.graph import StateGraph, END, START
-from langgraph.prebuilt import create_agent
+from langchain.agents import create_agent  
 
 from pydantic import BaseModel, Field
 
@@ -39,6 +39,11 @@ from tools.analyst_tools import (
     QueryOptimizationTool,
     DataAnalysisTool
 )
+
+# 导入日志配置
+from logger_config import get_agent_logger
+
+logger = get_agent_logger()
 
 
 # ============= State 定义 =============
@@ -105,6 +110,7 @@ class DataAnalystAgent:
         self.lightrag_config = lightrag_config or {}
         
         # 初始化组件
+        logger.info("开始初始化数据分析师 Agent...")
         self._initialize_knowledge_modules()
         self._initialize_executors()
         self._initialize_llm()
@@ -112,22 +118,22 @@ class DataAnalystAgent:
         self._initialize_agent_executor()
         self._initialize_graph()
         
-        print("✓ 数据分析师 Agent 初始化完成")
+        logger.info("✓ 数据分析师 Agent 初始化完成")
     
     def _initialize_knowledge_modules(self):
         """初始化知识模块"""
         try:
             self.online_dict = OnlineDictionaryModule()
-            print("  ✓ 在线字典模块已加载")
+            logger.info("  ✓ 在线字典模块已加载")
         except Exception as e:
-            print(f"  ⚠️ 在线字典模块加载失败: {e}")
+            logger.warning(f"  ⚠️ 在线字典模块加载失败: {e}")
             self.online_dict = None
         
         try:
             self.metadata = SingaBIMetadataModule()
-            print("  ✓ BI 元数据模块已加载")
+            logger.info("  ✓ BI 元数据模块已加载")
         except Exception as e:
-            print(f"  ⚠️ BI 元数据模块加载失败: {e}")
+            logger.warning(f"  ⚠️ BI 元数据模块加载失败: {e}")
             self.metadata = None
         
         try:
@@ -135,25 +141,25 @@ class DataAnalystAgent:
                 api_url=self.lightrag_config.get('api_url'),
                 api_key=self.lightrag_config.get('api_key')
             )
-            print("  ✓ LightRAG 客户端已初始化")
+            logger.info("  ✓ LightRAG 客户端已初始化")
         except Exception as e:
-            print(f"  ⚠️ LightRAG 客户端初始化失败: {e}")
+            logger.warning(f"  ⚠️ LightRAG 客户端初始化失败: {e}")
             self.lightrag = None
     
     def _initialize_executors(self):
         """初始化 SQL 执行器"""
         try:
             self.mysql_executor = MySQLExecutor(self.mysql_config)
-            print("  ✓ MySQL 执行器已初始化")
+            logger.info("  ✓ MySQL 执行器已初始化")
         except Exception as e:
-            print(f"  ⚠️ MySQL 执行器初始化失败: {e}")
+            logger.warning(f"  ⚠️ MySQL 执行器初始化失败: {e}")
             self.mysql_executor = None
         
         try:
             self.redash_executor = RedashExecutor(self.redash_config)
-            print("  ✓ Redash 执行器已初始化")
+            logger.info("  ✓ Redash 执行器已初始化")
         except Exception as e:
-            print(f"  ⚠️ Redash 执行器初始化失败: {e}")
+            logger.warning(f"  ⚠️ Redash 执行器初始化失败: {e}")
             self.redash_executor = None
     
     def _initialize_llm(self):
@@ -172,7 +178,7 @@ class DataAnalystAgent:
             llm_kwargs['base_url'] = base_url
         
         self.llm = ChatOpenAI(**llm_kwargs)
-        print(f"  ✓ LLM 已初始化: {model}")
+        logger.info(f"  ✓ LLM 已初始化: {model}")
     
     def _initialize_tools(self):
         """初始化工具集"""
@@ -202,7 +208,7 @@ class DataAnalystAgent:
         # 5. 数据分析工具
         self.tools.append(DataAnalysisTool())
         
-        print(f"  ✓ 工具集已初始化: {len(self.tools)} 个工具")
+        logger.info(f"  ✓ 工具集已初始化: {len(self.tools)} 个工具")
     
     def _initialize_agent_executor(self):
         """初始化 Agent 执行器（ReAct Agent）"""
@@ -235,7 +241,7 @@ class DataAnalystAgent:
             state_modifier=AGENT_EXECUTOR_SYSTEM_PROMPT
         )
         
-        print("  ✓ Agent 执行器已创建")
+        logger.info("  ✓ Agent 执行器已创建")
     
     def _initialize_graph(self):
         """初始化 LangGraph 工作流"""
@@ -263,14 +269,16 @@ class DataAnalystAgent:
         
         # 编译
         self.app = workflow.compile()
-        print("  ✓ LangGraph 工作流已编译")
+        logger.info("  ✓ LangGraph 工作流已编译")
     
     async def plan_step(self, state: DataAnalystState) -> Dict:
         """规划步骤"""
+        logger.debug(f"规划步骤 - 输入: {state['input']}")
         messages = [HumanMessage(content=state["input"])]
         plan = await (planner_prompt | self.llm.with_structured_output(Plan)).ainvoke(
             {"messages": messages}
         )
+        logger.info(f"生成执行计划，共 {len(plan.steps)} 步")
         return {"plan": plan.steps}
     
     async def execute_step(self, state: DataAnalystState) -> Dict:
@@ -280,6 +288,8 @@ class DataAnalystAgent:
         
         # 当前任务
         task = plan[0]
+        logger.info(f"执行步骤: {task}")
+        
         task_formatted = f"""对于以下计划：
 {plan_str}
 
@@ -295,6 +305,7 @@ class DataAnalystAgent:
         
         # 提取最后的消息
         last_message = response["messages"][-1].content if response.get("messages") else "执行完成"
+        logger.debug(f"步骤执行结果: {last_message[:200]}...")
         
         return {
             "past_steps": [(task, last_message)]
@@ -348,13 +359,17 @@ class DataAnalystAgent:
         }
         
         try:
+            logger.info(f"开始分析问题: {question}")
             # 执行工作流
             final_state = await self.app.ainvoke(inputs, config=config)
             
             # 返回最终响应
-            return final_state.get("response", "未能生成响应")
+            response = final_state.get("response", "未能生成响应")
+            logger.info("分析完成")
+            return response
         
         except Exception as e:
+            logger.error(f"执行失败: {str(e)}", exc_info=True)
             return f"执行失败: {str(e)}"
     
     def get_graph_image(self) -> bytes:

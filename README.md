@@ -30,6 +30,7 @@
 DB_MCP_server/
 ├── server.py                      # MCP 服务器核心
 ├── main.py                        # 服务入口
+├── logger_config.py               # 统一日志配置
 ├── pyproject.toml                 # 项目配置和依赖
 ├── docker-compose.yml             # Neo4j + Qdrant 服务
 ├── env.example                    # 环境配置示例
@@ -37,13 +38,13 @@ DB_MCP_server/
 ├── agent/                         # 数据分析师 Agent
 │   ├── data_analyst_agent.py      # Plan-Execute-Replan Agent
 │   ├── prompts.py                 # Prompt 模板
-│   └── plan_execute_replan_agent.py # 原始实现（废弃）
+│   └── plan_execute_replan_agent.py # agent抽象实现逻辑
 │
 ├── knowledge/                     # 知识模块
 │   ├── base.py                    # 知识模块基类
 │   ├── online_dictionary.py       # 在线数据字典
 │   ├── metadata.py                # BI 元数据
-│   └── lightrag_client.py         # LightRAG 客户端
+│   └── lightrag_client.py         # LightRAG 客户端（支持根据历史query查询表和字段以及业务逻辑）
 │
 ├── executors/                     # SQL 执行器
 │   ├── base.py                    # 执行器基类
@@ -81,7 +82,8 @@ DB_MCP_server/
 └── docs/                          # 文档
     ├── PROJECT_SUMMARY.md         # 项目总结
     ├── DATA_ANALYST_AGENT.md      # Agent 使用指南
-    └── ENV_CONFIG.md              # 环境配置说明
+    ├── ENV_CONFIG.md              # 环境配置
+    └── LOGGING.md                 # 日志配置说明
 ```
 
 ## 快速开始
@@ -148,7 +150,40 @@ python main.py --help
 | `--host` | 0.0.0.0 | 监听地址 |
 | `--port` | 8000 | 监听端口 |
 | `--reload` | false | 开启热重载（开发模式）|
-| `--log-level` | info | 日志级别（debug/info/warning/error）|
+| `--log-level` | info | 日志级别（debug/info/warning/error/critical）|
+| `--log-dir` | ./logs | 日志文件目录 |
+| `--no-file-log` | false | 禁用文件日志，仅输出到控制台 |
+
+### 日志配置
+
+项目使用统一的日志系统，支持控制台和文件双输出：
+
+```bash
+# 设置日志级别为 debug（显示详细调试信息）
+python main.py --log-level debug
+
+# 指定自定义日志目录
+python main.py --log-dir /var/log/db_mcp_server
+
+# 仅输出到控制台，不写入文件（适合容器环境）
+python main.py --no-file-log
+
+# 通过环境变量设置日志级别
+export LOG_LEVEL=debug
+python main.py
+```
+
+**日志文件结构**：
+```
+logs/
+├── db_mcp_server.server.log        # 服务器主日志
+├── db_mcp_server.server_error.log  # 服务器错误日志
+├── db_mcp_server.agent.log         # Agent 模块日志
+├── db_mcp_server.executor.log      # Executor 模块日志
+└── db_mcp_server.knowledge.log     # Knowledge 模块日志
+```
+
+更多日志配置详情请参考 [docs/LOGGING.md](docs/LOGGING.md)
 
 ### 验证安装
 
@@ -485,6 +520,7 @@ python data_pipeline/04_upload_redash_queries.py
 - [项目总结](docs/PROJECT_SUMMARY.md) - 项目架构和技术栈详解
 - [Agent 使用指南](docs/DATA_ANALYST_AGENT.md) - 数据分析师 Agent 完整文档
 - [环境配置](docs/ENV_CONFIG.md) - 详细的环境配置说明
+- [日志配置](docs/LOGGING.md) - 日志系统配置和使用指南
 
 ## 常见问题
 

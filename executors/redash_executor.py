@@ -4,12 +4,19 @@ Redash API 执行器
 """
 
 import os
+import sys
 import time
 import asyncio
 from typing import Any, Dict, List, Optional
 import httpx
 
+# 添加父目录到路径
+sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
+
 from .base import SQLExecutor, ExecutionResult
+from logger_config import get_executor_logger
+
+logger = get_executor_logger()
 
 
 class RedashExecutor(SQLExecutor):
@@ -51,7 +58,7 @@ class RedashExecutor(SQLExecutor):
         # SSL 验证（内网可能需要关闭）
         self.verify_ssl = self.config.get('verify_ssl', False)
         
-        print(f"✓ Redash 客户端初始化成功: {self.redash_url}")
+        logger.info(f"✓ Redash 客户端初始化成功: {self.redash_url}")
     
     async def execute(
         self,
@@ -75,6 +82,7 @@ class RedashExecutor(SQLExecutor):
         # 验证 SQL 安全性
         is_valid, error_msg = self.validate_sql(sql)
         if not is_valid:
+            logger.warning(f"SQL 验证失败: {error_msg}")
             return ExecutionResult(
                 success=False,
                 rows=[],
@@ -89,11 +97,15 @@ class RedashExecutor(SQLExecutor):
         sql_with_limit = self._add_limit(sql, limit)
         
         try:
+            logger.debug(f"通过 Redash 执行 SQL: {sql_with_limit[:200]}...")
+            
             # 1. 创建临时查询
             query_id = await self._create_adhoc_query(sql_with_limit)
+            logger.debug(f"创建查询成功，query_id: {query_id}")
             
             # 2. 执行查询
             job_id = await self._execute_query(query_id)
+            logger.debug(f"提交执行任务，job_id: {job_id}")
             
             # 3. 轮询查询状态
             result_data = await self._wait_for_result(job_id, timeout)
@@ -102,6 +114,8 @@ class RedashExecutor(SQLExecutor):
             
             # 4. 解析结果
             rows, columns = self._parse_result(result_data)
+            
+            logger.info(f"Redash 查询成功，返回 {len(rows)} 行，耗时 {execution_time:.3f}s")
             
             return ExecutionResult(
                 success=True,
@@ -120,6 +134,7 @@ class RedashExecutor(SQLExecutor):
         
         except asyncio.TimeoutError:
             execution_time = time.time() - start_time
+            logger.error(f"Redash 查询超时（{timeout}秒）")
             return ExecutionResult(
                 success=False,
                 rows=[],
@@ -132,6 +147,8 @@ class RedashExecutor(SQLExecutor):
         
         except Exception as e:
             execution_time = time.time() - start_time
+            error_msg = self.format_error(e)
+            logger.error(f"Redash 查询失败: {error_msg}")
             return ExecutionResult(
                 success=False,
                 rows=[],
@@ -139,7 +156,7 @@ class RedashExecutor(SQLExecutor):
                 row_count=0,
                 execution_time=execution_time,
                 sql=sql,
-                error=self.format_error(e)
+                error=error_msg
             )
     
     async def _create_adhoc_query(self, sql: str) -> int:
@@ -288,9 +305,14 @@ class RedashExecutor(SQLExecutor):
                     headers=self.headers,
                     timeout=5
                 )
-                return response.status_code == 200
+                success = response.status_code == 200
+                if success:
+                    logger.debug("Redash 连接测试成功")
+                else:
+                    logger.warning(f"Redash 连接测试失败，状态码: {response.status_code}")
+                return success
         except Exception as e:
-            print(f"Redash 连接测试失败: {e}")
+            logger.error(f"Redash 连接测试失败: {e}")
             return False
     
     def _add_limit(self, sql: str, limit: Optional[int]) -> str:

@@ -10,24 +10,20 @@ dependencies = [
     "uvicorn>=0.30.0",
     "starlette>=0.38.0",
     "sse-starlette>=2.0.0",
-    
     # HTTP 客户端
     "httpx>=0.27.0",
     "requests>=2.32.5",
-    
     # 数据处理
     "pydantic>=2.0.0",
     "sqlalchemy>=2.0.45",
     "pymysql>=1.1.2",
     "pandas>=2.0.0",
-    
     # LLM 和 Agent
     "openai>=2.14.0",
     "langchain>=0.3.0",
     "langchain-core>=0.3.0",
     "langchain-openai>=0.2.0",
     "langgraph>=0.2.0",
-    
     # 工具库
     "python-dotenv>=1.2.1",
     "google-api-python-client>=2.187.0",
@@ -35,7 +31,17 @@ dependencies = [
     "sqlglot>=28.5.0",
     "tqdm>=4.67.1",
     "nest-asyncio>=1.6.0",
+    "pytest>=9.0.2",
 ]
+
+[project.optional-dependencies]
+# 开发和测试工具
+dev = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.23.0",
+    "pytest-cov>=4.1.0",  # 测试覆盖率
+]
+
 
 [project.scripts]
 db-server = "server:main"

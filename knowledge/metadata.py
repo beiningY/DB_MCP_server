@@ -5,10 +5,17 @@ Singa BI 元数据模块
 
 import json
 import os
+import sys
 from typing import Any, Dict, List, Optional, Set
 from pathlib import Path
 
+# 添加父目录到路径
+sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
+
 from .base import KnowledgeModule
+from logger_config import get_knowledge_logger
+
+logger = get_knowledge_logger()
 
 
 class SingaBIMetadataModule(KnowledgeModule):
@@ -37,9 +44,9 @@ class SingaBIMetadataModule(KnowledgeModule):
             self._build_indices()
             
             tables = self.metadata.get('tables', [])
-            print(f"✓ 成功加载 BI 元数据: {len(tables)} 个表")
+            logger.info(f"✓ 成功加载 BI 元数据: {len(tables)} 个表")
         except Exception as e:
-            print(f"⚠️ 加载 BI 元数据失败: {e}")
+            logger.warning(f"⚠️ 加载 BI 元数据失败: {e}")
             self.metadata = {'tables': []}
             self.table_index = {}
             self.domain_index = {}

@@ -4,9 +4,17 @@ LightRAG API 客户端
 """
 
 import os
+import sys
 import httpx
 from typing import Any, Dict, List, Optional, Literal
 import json
+
+# 添加父目录到路径
+sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
+
+from logger_config import get_knowledge_logger
+
+logger = get_knowledge_logger()
 
 
 class LightRAGClient:
@@ -40,6 +48,8 @@ class LightRAGClient:
         }
         if self.api_key:
             self.headers['Authorization'] = f'Bearer {self.api_key}'
+        
+        logger.debug(f"LightRAG 客户端已初始化: {self.api_url}")
     
     async def health_check(self) -> bool:
         """
@@ -54,16 +64,21 @@ class LightRAGClient:
                     f"{self.api_url}/health",
                     headers=self.headers
                 )
-                return response.status_code == 200
+                is_healthy = response.status_code == 200
+                if is_healthy:
+                    logger.debug("LightRAG 服务健康检查成功")
+                else:
+                    logger.warning(f"LightRAG 服务健康检查失败，状态码: {response.status_code}")
+                return is_healthy
         except Exception as e:
-            print(f"⚠️ LightRAG 服务健康检查失败: {e}")
+            logger.warning(f"⚠️ LightRAG 服务健康检查失败: {e}")
             return False
     
     async def search(
         self,
         query: str,
-        mode: Literal["naive", "local", "global", "hybrid"] = "hybrid",
-        top_k: int = 5,
+        mode: Literal["naive", "local", "global", "hybrid", "mix"] = "mix",
+        top_k: int = 10,
         **kwargs
     ) -> Dict[str, Any]:
         """
@@ -90,6 +105,8 @@ class LightRAGClient:
             }
         """
         try:
+            logger.debug(f"LightRAG 搜索: query='{query}', mode={mode}, top_k={top_k}")
+            
             async with httpx.AsyncClient(timeout=self.timeout) as client:
                 # 构建请求体
                 payload = {
@@ -108,8 +125,11 @@ class LightRAGClient:
                 
                 if response.status_code == 200:
                     data = response.json()
-                    return self._parse_response(data, query, mode)
+                    result = self._parse_response(data, query, mode)
+                    logger.info(f"LightRAG 搜索成功，返回 {result.get('total', 0)} 条结果")
+                    return result
                 else:
+                    logger.error(f'LightRAG API 返回错误: {response.status_code}')
                     return {
                         'error': f'LightRAG API 返回错误: {response.status_code}',
                         'mode': mode,
@@ -119,6 +139,7 @@ class LightRAGClient:
                     }
         
         except Exception as e:
+            logger.error(f'调用 LightRAG API 失败: {str(e)}')
             return {
                 'error': f'调用 LightRAG API 失败: {str(e)}',
                 'mode': mode,

@@ -5,7 +5,7 @@
 import asyncio
 import os
 from dotenv import load_dotenv
-from agent import create_data_analyst_agent
+from agent import DataAnalystAgent as create_data_analyst_agent
 
 # 加载环境变量
 load_dotenv()

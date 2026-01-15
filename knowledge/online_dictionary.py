@@ -5,11 +5,18 @@
 
 import json
 import os
+import sys
 from typing import Any, Dict, List, Optional
 from pathlib import Path
 import re
 
+# 添加父目录到路径
+sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
+
 from .base import KnowledgeModule
+from logger_config import get_knowledge_logger
+
+logger = get_knowledge_logger()
 
 
 class OnlineDictionaryModule(KnowledgeModule):
@@ -33,9 +40,9 @@ class OnlineDictionaryModule(KnowledgeModule):
         try:
             with open(dict_file, 'r', encoding='utf-8') as f:
                 self.dictionary = json.load(f)
-            print(f"✓ 成功加载在线数据字典: {len(self.dictionary)} 个表")
+            logger.info(f"✓ 成功加载在线数据字典: {len(self.dictionary)} 个表")
         except Exception as e:
-            print(f"⚠️ 加载在线数据字典失败: {e}")
+            logger.warning(f"⚠️ 加载在线数据字典失败: {e}")
             self.dictionary = {}
     
     async def search(self, query: str, **kwargs) -> Dict[str, Any]:

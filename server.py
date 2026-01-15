@@ -4,7 +4,6 @@ MCP Server 核心模块
 """
 import argparse
 import asyncio
-import logging
 import os
 from contextlib import asynccontextmanager
 from typing import Any
@@ -20,12 +19,11 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 import uvicorn
 
-# 配置日志
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
-logger = logging.getLogger(__name__)
+# 导入日志配置
+from logger_config import setup_logging, get_server_logger
+
+# 在模块级别设置日志（将在 main 函数中初始化）
+logger = None
 
 
 class MCPServerApp:
@@ -45,20 +43,28 @@ class MCPServerApp:
     def _initialize_data_analyst(self):
         """初始化数据分析师 Agent"""
         try:
-            from agent import create_data_analyst_agent
+            from agent import DataAnalystAgent
             
-            self.data_analyst = create_data_analyst_agent(
-                mysql_url=os.getenv("DB_URL"),
-                redash_url=os.getenv("REDASH_URL"),
-                redash_api_key=os.getenv("REDASH_API_KEY"),
-                llm_model=os.getenv("LLM_MODEL", "gpt-4"),
-                llm_api_key=os.getenv("LLM_API_KEY"),
-                llm_base_url=os.getenv("LLM_BASE_URL"),
-                lightrag_url=os.getenv("LIGHTRAG_API_URL")
+            self.data_analyst = DataAnalystAgent(
+                mysql_config={'db_url': os.getenv("DB_URL")},
+                redash_config={
+                    'redash_url': os.getenv("REDASH_URL"),
+                    'api_key': os.getenv("REDASH_API_KEY")
+                },
+                llm_config={
+                    'model': os.getenv("LLM_MODEL", "gpt-4"),
+                    'api_key': os.getenv("LLM_API_KEY"),
+                    'base_url': os.getenv("LLM_BASE_URL")
+                },
+                lightrag_config={
+                    'api_url': os.getenv("LIGHTRAG_API_URL")
+                }
             )
-            logger.info("✓ 数据分析师 Agent 初始化成功")
+            if logger:
+                logger.info("✓ 数据分析师 Agent 初始化成功")
         except Exception as e:
-            logger.warning(f"⚠️ 数据分析师 Agent 初始化失败: {e}")
+            if logger:
+                logger.warning(f"⚠️ 数据分析师 Agent 初始化失败: {e}")
             self.data_analyst = None
         
     def _register_handlers(self):
@@ -190,7 +196,8 @@ class MCPServerApp:
     
     async def _call_tool(self, name: str, arguments: dict[str, Any]) -> list[types.TextContent]:
         """工具调用分发器"""
-        logger.info(f"调用工具: {name}, 参数: {arguments}")
+        if logger:
+            logger.info(f"调用工具: {name}, 参数: {arguments}")
         
         if name == "ping":
             return [types.TextContent(type="text", text="pong! 服务器连接正常 ✓")]
@@ -224,7 +231,8 @@ class MCPServerApp:
             max_iterations = arguments.get("max_iterations", 10)
             
             try:
-                logger.info(f"数据分析师处理问题: {question}")
+                if logger:
+                    logger.info(f"数据分析师处理问题: {question}")
                 result = await self.data_analyst.analyze(
                     question=question,
                     database=database,
@@ -233,7 +241,8 @@ class MCPServerApp:
                 )
                 return [types.TextContent(type="text", text=result)]
             except Exception as e:
-                logger.error(f"数据分析失败: {e}")
+                if logger:
+                    logger.error(f"数据分析失败: {e}")
                 return [types.TextContent(
                     type="text",
                     text=f"❌ 分析失败: {str(e)}"
@@ -286,7 +295,8 @@ class MCPServerApp:
     
     async def _read_resource(self, uri: str) -> str:
         """读取资源"""
-        logger.info(f"读取资源: {uri}")
+        if logger:
+            logger.info(f"读取资源: {uri}")
         
         if uri == "info://server/status":
             import json
@@ -351,7 +361,8 @@ class MCPServerApp:
     
     async def handle_sse(self, request: Request):
         """处理 SSE 连接请求"""
-        logger.info(f"新的 SSE 连接: {request.client}")
+        if logger:
+            logger.info(f"新的 SSE 连接: {request.client}")
         async with self.sse.connect_sse(
             request.scope, request.receive, request._send
         ) as streams:
@@ -418,13 +429,15 @@ class MCPServerApp:
     
     async def _on_startup(self):
         """服务器启动回调"""
-        logger.info(f"🚀 {self.name} 启动成功")
-        logger.info("📡 SSE 端点: /sse")
-        logger.info("📨 消息端点: /messages/")
+        if logger:
+            logger.info(f"🚀 {self.name} 启动成功")
+            logger.info("📡 SSE 端点: /sse")
+            logger.info("📨 消息端点: /messages/")
     
     async def _on_shutdown(self):
         """服务器关闭回调"""
-        logger.info(f"👋 {self.name} 正在关闭...")
+        if logger:
+            logger.info(f"👋 {self.name} 正在关闭...")
 
 
 def main():
@@ -436,8 +449,23 @@ def main():
     parser.add_argument("--log-level", type=str, default="info", 
                        choices=["debug", "info", "warning", "error"],
                        help="日志级别 (默认: info)")
+    parser.add_argument("--log-dir", type=str, default=None, help="日志文件目录 (默认: ./logs)")
+    parser.add_argument("--no-file-log", action="store_true", help="禁用文件日志输出")
     
     args = parser.parse_args()
+    
+    # 配置日志
+    global logger
+    setup_logging(
+        log_dir=args.log_dir,
+        log_level=args.log_level,
+        console_output=True,
+        file_output=not args.no_file_log,
+        rotation_mode='time',  # 按天轮转
+        backup_count=30  # 保留30天
+    )
+    logger = get_server_logger()
+    logger.info("日志系统初始化完成")
     
     # 创建应用
     mcp_app = MCPServerApp(name="DB MCP Server")

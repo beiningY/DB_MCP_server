@@ -4,6 +4,7 @@ MySQL 直连执行器
 """
 
 import os
+import sys
 import time
 from typing import Any, Dict, List, Optional
 from sqlalchemy import create_engine, text
@@ -11,7 +12,13 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.exc import SQLAlchemyError
 import pandas as pd
 
+# 添加父目录到路径
+sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
+
 from .base import SQLExecutor, ExecutionResult
+from logger_config import get_executor_logger
+
+logger = get_executor_logger()
 
 
 class MySQLExecutor(SQLExecutor):
@@ -48,10 +55,10 @@ class MySQLExecutor(SQLExecutor):
             with self.engine.connect() as conn:
                 conn.execute(text("SELECT 1"))
             
-            print(f"✓ MySQL 连接成功: {self.engine.url.database}")
+            logger.info(f"✓ MySQL 连接成功: {self.engine.url.database}")
         
         except Exception as e:
-            print(f"❌ MySQL 连接失败: {e}")
+            logger.error(f"❌ MySQL 连接失败: {e}")
             raise
     
     async def execute(
@@ -76,6 +83,7 @@ class MySQLExecutor(SQLExecutor):
         # 验证 SQL 安全性
         is_valid, error_msg = self.validate_sql(sql)
         if not is_valid:
+            logger.warning(f"SQL 验证失败: {error_msg}")
             return ExecutionResult(
                 success=False,
                 rows=[],
@@ -90,6 +98,8 @@ class MySQLExecutor(SQLExecutor):
         sql_with_limit = self._add_limit(sql, limit)
         
         try:
+            logger.debug(f"执行 SQL: {sql_with_limit[:200]}...")
+            
             # 执行查询
             with self.engine.connect() as conn:
                 # 设置查询超时
@@ -104,6 +114,8 @@ class MySQLExecutor(SQLExecutor):
                 # 转换为标准格式
                 columns = df.columns.tolist()
                 rows = df.to_dict('records')
+                
+                logger.info(f"查询成功，返回 {len(rows)} 行，耗时 {execution_time:.3f}s")
                 
                 return ExecutionResult(
                     success=True,
@@ -121,6 +133,8 @@ class MySQLExecutor(SQLExecutor):
         
         except SQLAlchemyError as e:
             execution_time = time.time() - start_time
+            error_msg = self.format_error(e)
+            logger.error(f"SQL 执行失败: {error_msg}")
             return ExecutionResult(
                 success=False,
                 rows=[],
@@ -128,11 +142,13 @@ class MySQLExecutor(SQLExecutor):
                 row_count=0,
                 execution_time=execution_time,
                 sql=sql,
-                error=self.format_error(e)
+                error=error_msg
             )
         
         except Exception as e:
             execution_time = time.time() - start_time
+            error_msg = self.format_error(e)
+            logger.error(f"未知错误: {error_msg}")
             return ExecutionResult(
                 success=False,
                 rows=[],
@@ -140,7 +156,7 @@ class MySQLExecutor(SQLExecutor):
                 row_count=0,
                 execution_time=execution_time,
                 sql=sql,
-                error=f"未知错误: {self.format_error(e)}"
+                error=f"未知错误: {error_msg}"
             )
     
     async def test_connection(self) -> bool:
@@ -148,9 +164,10 @@ class MySQLExecutor(SQLExecutor):
         try:
             with self.engine.connect() as conn:
                 conn.execute(text("SELECT 1"))
+            logger.debug("MySQL 连接测试成功")
             return True
         except Exception as e:
-            print(f"连接测试失败: {e}")
+            logger.error(f"连接测试失败: {e}")
             return False
     
     def _add_limit(self, sql: str, limit: Optional[int]) -> str:
@@ -218,4 +235,4 @@ class MySQLExecutor(SQLExecutor):
         """关闭数据库连接"""
         if hasattr(self, 'engine'):
             self.engine.dispose()
-            print("✓ MySQL 连接已关闭")
+            logger.info("✓ MySQL 连接已关闭")
