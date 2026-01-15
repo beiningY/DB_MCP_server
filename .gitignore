@@ -48,3 +48,4 @@ LightRAG/*
 
 data/*
 data.tar.gz
+._docker-compose.yml
