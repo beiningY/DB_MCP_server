@@ -86,6 +86,25 @@ DB_MCP_server/
     └── LOGGING.md                 # 日志配置说明
 ```
 
+## 架构说明
+
+本项目包含两个独立的服务器，可根据需求选择使用：
+
+### MCP Server（端口 8000）
+- 基于 MCP 协议的智能服务器
+- 用于 AI Agent 工具调用（Cursor、Claude Desktop 等）
+- 支持 SSE 连接
+- 完整的 Agent 推理能力
+
+### API Server（端口 8001）⭐ 新增
+- 基于 FastAPI 的 HTTP REST API
+- 专为前端 Web 应用设计
+- 完整的 OpenAPI/Swagger 文档
+- SSE 流式响应支持
+- 符合标准的 RESTful 接口
+
+**两个服务器可独立运行，也可同时运行。**
+
 ## 快速开始
 
 ### 1. 安装依赖
@@ -127,7 +146,9 @@ LLM_API_KEY=sk-your-api-key
 docker-compose up -d
 ```
 
-### 4. 启动 MCP Server
+### 4. 启动服务器
+
+#### 方式 A：启动 MCP Server（用于 AI Agent 集成）
 
 ```bash
 # 基本启动
@@ -141,6 +162,37 @@ python main.py --reload
 
 # 查看所有选项
 python main.py --help
+```
+
+#### 方式 B：启动 API Server（用于前端 Web 应用）⭐ 推荐
+
+```bash
+# 基本启动（默认端口 8001）
+python start_api_server.py
+
+# 开发模式（热重载）
+python start_api_server.py --reload
+
+# 生产模式（多进程）
+python start_api_server.py --workers 4
+
+# 自定义配置
+python start_api_server.py --host 0.0.0.0 --port 8080 --log-level debug
+```
+
+启动后访问：
+- **API 文档**: http://localhost:8001/docs
+- **健康检查**: http://localhost:8001/health
+- **OpenAPI 规范**: http://localhost:8001/openapi.json
+
+#### 方式 C：同时运行两个服务器
+
+```bash
+# 终端1：启动 MCP Server
+python main.py --port 8000
+
+# 终端2：启动 API Server
+python start_api_server.py --port 8001
 ```
 
 ### 命令行参数
@@ -203,12 +255,30 @@ curl http://localhost:8000/health
 
 ## API 端点
 
+### MCP Server 端点（端口 8000）
+
 | 端点 | 方法 | 说明 |
 |------|------|------|
 | `/` | GET | 服务器信息 |
 | `/health` | GET | 健康检查 |
 | `/sse` | GET | SSE 连接端点 |
 | `/messages/` | POST | MCP 消息处理 |
+
+### API Server 端点（端口 8001）
+
+| 端点 | 方法 | 说明 |
+|------|------|------|
+| `/api/connection/test` | POST | 测试数据库连接 |
+| `/api/connection/save` | POST | 保存连接配置 |
+| `/api/query/execute` | POST | 执行 SQL 查询 |
+| `/api/metadata/schema` | GET | 获取数据库 Schema |
+| `/api/metadata/description/generate` | POST | AI 生成字段描述 |
+| `/api/chat/completion` | POST | AI 流式对话（SSE）|
+
+详细 API 文档请参考：
+- **在线文档**: http://localhost:8001/docs
+- **OpenAPI 规范**: [docs/openapi.yaml](docs/openapi.yaml)
+- **详细说明**: [docs/API_SERVER.md](docs/API_SERVER.md)
 
 ## 客户端连接
 
@@ -518,6 +588,8 @@ python data_pipeline/04_upload_redash_queries.py
 ## 文档
 
 - [项目总结](docs/PROJECT_SUMMARY.md) - 项目架构和技术栈详解
+- [API Server 文档](docs/API_SERVER.md) - FastAPI 服务器完整文档 ⭐ 新增
+- [OpenAPI 规范](docs/openapi.yaml) - 接口文档定义
 - [Agent 使用指南](docs/DATA_ANALYST_AGENT.md) - 数据分析师 Agent 完整文档
 - [环境配置](docs/ENV_CONFIG.md) - 详细的环境配置说明
 - [日志配置](docs/LOGGING.md) - 日志系统配置和使用指南

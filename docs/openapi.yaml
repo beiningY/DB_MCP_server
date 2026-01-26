@@ -1,0 +1,300 @@
+openapi: 3.0.3
+info:
+  title: Singa Flow Backend API
+  description: |
+    后端 API 接口文档，用于 Singa Flow 前端的数据连接、SQL 执行、元数据管理及 AI 对话功能。
+    
+    **主要模块：**
+    1. Connection: 数据库连接测试与保存
+    2. Query: SQL 执行
+    3. Metadata: 元数据与 Schema 同步
+    4. Chat: AI 流式对话 (SSE)
+  version: 1.0.0
+servers:
+  - url: http://localhost:8000/api
+    description: 本地开发服务器
+
+tags:
+  - name: Connection
+    description: 数据库连接管理
+  - name: Query
+    description: SQL 执行与数据获取
+  - name: Metadata
+    description: 数据字典与 Schema 管理
+  - name: Chat
+    description: AI 智能问答 (Server-Sent Events)
+
+paths:
+  /connection/test:
+    post:
+      tags:
+        - Connection
+      summary: 测试数据库连接
+      operationId: testConnection
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DbConnectionConfig'
+      responses:
+        '200':
+          description: 测试结果
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConnectionResponse'
+        '500':
+          description: 服务器内部错误
+
+  /connection/save:
+    post:
+      tags:
+        - Connection
+      summary: 保存连接配置并同步 Schema
+      operationId: saveConnection
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DbConnectionConfig'
+      responses:
+        '200':
+          description: 保存结果
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConnectionResponse'
+
+  /query/execute:
+    post:
+      tags:
+        - Query
+      summary: 执行 SQL 查询
+      description: 在已配置的数据库连接上执行 SQL，返回表格数据和列定义。
+      operationId: executeQuery
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - sql
+              properties:
+                sql:
+                  type: string
+                  example: "SELECT * FROM orders LIMIT 10;"
+                  description: 需要执行的 SQL 语句
+      responses:
+        '200':
+          description: 查询成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QueryResult'
+        '400':
+          description: SQL 语法错误或执行失败
+
+  /metadata/schema:
+    get:
+      tags:
+        - Metadata
+      summary: 获取全量数据库 Schema
+      operationId: fetchSchema
+      responses:
+        '200':
+          description: 成功返回表结构列表
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/TableSchema'
+
+  /metadata/description/generate:
+    post:
+      tags:
+        - Metadata
+      summary: AI 生成字段描述
+      operationId: generateDescription
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - field
+                - table
+              properties:
+                field:
+                  type: string
+                  example: "is_vip"
+                table:
+                  type: string
+                  example: "users"
+      responses:
+        '200':
+          description: 生成成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  description:
+                    type: string
+                    example: "Indicates whether the user has an active VIP subscription."
+
+  /chat/completion:
+    post:
+      tags:
+        - Chat
+      summary: AI 流式对话 (SSE)
+      description: |
+        使用 Server-Sent Events (SSE) 返回流式响应。
+        
+        **响应格式 (Text Stream):**
+        每一行以 `data: ` 开头，包含 JSON 对象或结束标记。
+        
+        示例流:
+        ```
+        data: {"type": "thought", "content": "Thinking..."}
+        data: {"type": "sql", "content": "SELECT * ..."}
+        data: {"type": "text", "content": "Here is result"}
+        data: [DONE]
+        ```
+      operationId: chatCompletion
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - prompt
+              properties:
+                prompt:
+                  type: string
+                  description: 用户输入的自然语言问题
+                  example: "帮我分析上个月的销售额"
+                schema:
+                  type: string
+                  description: 前端传递的简要 Schema 上下文
+                  example: "orders (id, amount, date)\nusers (id, name)"
+      responses:
+        '200':
+          description: SSE 流式响应
+          content:
+            text/event-stream:
+              schema:
+                type: string
+                description: SSE 数据流
+
+components:
+  schemas:
+    DbConnectionConfig:
+      type: object
+      required:
+        - type
+        - host
+        - port
+        - database
+        - username
+      properties:
+        type:
+          type: string
+          enum: [MySQL]
+          default: MySQL
+        host:
+          type: string
+          example: "127.0.0.1"
+        port:
+          type: string
+          example: "3306"
+        database:
+          type: string
+          example: "singa_flow_main"
+        username:
+          type: string
+          example: "readonly_user"
+        password:
+          type: string
+          format: password
+          example: "secret123"
+
+    ConnectionResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        message:
+          type: string
+
+    QueryResult:
+      type: object
+      properties:
+        columns:
+          type: array
+          items:
+            $ref: '#/components/schemas/TableColumn'
+        data:
+          type: array
+          description: 动态行数据数组
+          items:
+            type: object
+            additionalProperties: true
+        executionTime:
+          type: number
+          description: 执行耗时 (ms)
+          example: 124
+
+    TableColumn:
+      type: object
+      properties:
+        name:
+          type: string
+        type:
+          type: string
+          enum: ['string', 'number', 'date', 'boolean']
+          description: 前端用于渲染和图表推荐的简化类型映射
+
+    TableSchema:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        description:
+          type: string
+          nullable: true
+        isNew:
+          type: boolean
+          description: 标记是否为新发现的表
+        columns:
+          type: array
+          items:
+            type: object
+            properties:
+              name:
+                type: string
+              type:
+                type: string
+                description: 原始数据库字段类型 (e.g. VARCHAR(255))
+              description:
+                type: string
+                nullable: true
+              isNew:
+                type: boolean
+
+    # 仅用于文档说明 SSE 内部 JSON 结构，实际响应是 text/event-stream
+    StreamChunk:
+      type: object
+      properties:
+        type:
+          type: string
+          enum: ['thought', 'sql', 'text', 'error']
+        content:
+          type: string

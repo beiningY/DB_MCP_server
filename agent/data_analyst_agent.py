@@ -3,423 +3,255 @@
 基于 Plan-Execute-Replan 模式，集成知识模块和 SQL 执行器
 """
 
-import operator
 import os
-from typing import Annotated, Any, Dict, List, Literal, Optional, Tuple
+import operator
+from typing import Annotated, List, Tuple, Union
 from typing_extensions import TypedDict
-
-from langchain_openai import ChatOpenAI
-from langchain_core.messages import HumanMessage, SystemMessage
-from langgraph.graph import StateGraph, END, START
-from langchain.agents import create_agent  
-
+from dotenv import load_dotenv
 from pydantic import BaseModel, Field
-
-# 导入提示词
-from .prompts import (
-    planner_prompt,
-    replanner_prompt,
-    AGENT_EXECUTOR_SYSTEM_PROMPT
-)
-
-# 导入知识模块
-import sys
-sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
-
-from knowledge import (
-    OnlineDictionaryModule,
-    SingaBIMetadataModule,
-    LightRAGClient
-)
-from executors import MySQLExecutor, RedashExecutor
-from tools.analyst_tools import (
-    MetadataSearchTool,
-    HistoricalQuerySearchTool,
-    SQLExecutorTool,
-    QueryOptimizationTool,
-    DataAnalysisTool
-)
-
-# 导入日志配置
-from logger_config import get_agent_logger
-
-logger = get_agent_logger()
+from langchain_core.prompts import ChatPromptTemplate
+from langchain_openai import ChatOpenAI
+from langgraph.graph import StateGraph, START, END
+from langchain.agents import create_agent
 
 
-# ============= State 定义 =============
-class DataAnalystState(TypedDict):
-    """数据分析师 Agent 状态"""
-    input: str  # 用户问题
-    plan: List[str]  # 执行计划
-    past_steps: Annotated[List[Tuple], operator.add]  # 已执行步骤
-    response: str  # 最终响应
+load_dotenv()
+
+# 导入工具
+from tools import execute_sql_query, search_knowledge_graph, get_table_schema
 
 
-# ============= Pydantic 模型 =============
+# ============= 状态定义 =============
+class PlanExecute(TypedDict):
+    """Agent 状态"""
+    input: str
+    plan: List[str]
+    past_steps: Annotated[List[Tuple], operator.add]
+    response: str
+
+
+# ============= Schema 定义 =============
 class Plan(BaseModel):
     """执行计划"""
     steps: List[str] = Field(
-        description="执行步骤列表，按顺序排列"
+        description="要执行的步骤列表，按顺序排列"
     )
 
 
 class Response(BaseModel):
     """最终响应"""
-    response: str = Field(
-        description="给用户的最终回复"
-    )
+    response: str
 
 
 class Act(BaseModel):
-    """行动决策"""
-    action: Response | Plan = Field(
-        description="下一步行动：Response（结束）或 Plan（继续）"
+    """行动：继续执行或返回结果"""
+    action: Union[Response, Plan] = Field(
+        description="下一步行动。如果要响应用户，使用 Response；如果需要继续执行，使用 Plan"
     )
 
 
-# ============= 数据分析师 Agent =============
-class DataAnalystAgent:
-    """
-    数据分析师 Agent
+# ============= 初始化 LLM =============
+def get_llm():
+    """获取 LLM 实例"""
+    llm_model = os.getenv("LLM_MODEL", "gpt-4")
+    llm_base_url = os.getenv("LLM_BASE_URL")
+    llm_api_key = os.getenv("LLM_API_KEY")
     
-    架构：Plan-Execute-Replan
-    - Planner: 制定执行计划
-    - Executor: 使用 ReAct Agent 执行步骤
-    - Replanner: 根据结果重新规划或结束
-    """
     
-    def __init__(
-        self,
-        mysql_config: Optional[Dict[str, Any]] = None,
-        redash_config: Optional[Dict[str, Any]] = None,
-        llm_config: Optional[Dict[str, Any]] = None,
-        lightrag_config: Optional[Dict[str, Any]] = None
-    ):
-        """
-        初始化数据分析师 Agent
-        
-        Args:
-            mysql_config: MySQL 配置 {'db_url': ...}
-            redash_config: Redash 配置 {'redash_url': ..., 'api_key': ...}
-            llm_config: LLM 配置 {'model': ..., 'api_key': ..., 'base_url': ...}
-            lightrag_config: LightRAG 配置 {'api_url': ..., 'api_key': ...}
-        """
-        self.mysql_config = mysql_config or {}
-        self.redash_config = redash_config or {}
-        self.llm_config = llm_config or {}
-        self.lightrag_config = lightrag_config or {}
-        
-        # 初始化组件
-        logger.info("开始初始化数据分析师 Agent...")
-        self._initialize_knowledge_modules()
-        self._initialize_executors()
-        self._initialize_llm()
-        self._initialize_tools()
-        self._initialize_agent_executor()
-        self._initialize_graph()
-        
-        logger.info("✓ 数据分析师 Agent 初始化完成")
-    
-    def _initialize_knowledge_modules(self):
-        """初始化知识模块"""
-        try:
-            self.online_dict = OnlineDictionaryModule()
-            logger.info("  ✓ 在线字典模块已加载")
-        except Exception as e:
-            logger.warning(f"  ⚠️ 在线字典模块加载失败: {e}")
-            self.online_dict = None
-        
-        try:
-            self.metadata = SingaBIMetadataModule()
-            logger.info("  ✓ BI 元数据模块已加载")
-        except Exception as e:
-            logger.warning(f"  ⚠️ BI 元数据模块加载失败: {e}")
-            self.metadata = None
-        
-        try:
-            self.lightrag = LightRAGClient(
-                api_url=self.lightrag_config.get('api_url'),
-                api_key=self.lightrag_config.get('api_key')
-            )
-            logger.info("  ✓ LightRAG 客户端已初始化")
-        except Exception as e:
-            logger.warning(f"  ⚠️ LightRAG 客户端初始化失败: {e}")
-            self.lightrag = None
-    
-    def _initialize_executors(self):
-        """初始化 SQL 执行器"""
-        try:
-            self.mysql_executor = MySQLExecutor(self.mysql_config)
-            logger.info("  ✓ MySQL 执行器已初始化")
-        except Exception as e:
-            logger.warning(f"  ⚠️ MySQL 执行器初始化失败: {e}")
-            self.mysql_executor = None
-        
-        try:
-            self.redash_executor = RedashExecutor(self.redash_config)
-            logger.info("  ✓ Redash 执行器已初始化")
-        except Exception as e:
-            logger.warning(f"  ⚠️ Redash 执行器初始化失败: {e}")
-            self.redash_executor = None
-    
-    def _initialize_llm(self):
-        """初始化 LLM"""
-        model = self.llm_config.get('model') or os.getenv('LLM_MODEL', 'gpt-4')
-        api_key = self.llm_config.get('api_key') or os.getenv('LLM_API_KEY')
-        base_url = self.llm_config.get('base_url') or os.getenv('LLM_BASE_URL')
-        
-        llm_kwargs = {
-            'model': model,
-            'temperature': 0
-        }
-        if api_key:
-            llm_kwargs['api_key'] = api_key
-        if base_url:
-            llm_kwargs['base_url'] = base_url
-        
-        self.llm = ChatOpenAI(**llm_kwargs)
-        logger.info(f"  ✓ LLM 已初始化: {model}")
-    
-    def _initialize_tools(self):
-        """初始化工具集"""
-        self.tools = []
-        
-        # 1. 元数据搜索工具
-        if self.online_dict and self.metadata:
-            self.tools.append(
-                MetadataSearchTool(self.online_dict, self.metadata)
-            )
-        
-        # 2. 历史查询搜索工具
-        if self.lightrag:
-            self.tools.append(
-                HistoricalQuerySearchTool(self.lightrag)
-            )
-        
-        # 3. SQL 执行工具
-        if self.mysql_executor and self.redash_executor:
-            self.tools.append(
-                SQLExecutorTool(self.mysql_executor, self.redash_executor)
-            )
-        
-        # 4. 查询优化工具
-        self.tools.append(QueryOptimizationTool())
-        
-        # 5. 数据分析工具
-        self.tools.append(DataAnalysisTool())
-        
-        logger.info(f"  ✓ 工具集已初始化: {len(self.tools)} 个工具")
-    
-    def _initialize_agent_executor(self):
-        """初始化 Agent 执行器（ReAct Agent）"""
-        # 将 BaseTool 转换为 LangChain 工具格式
-        from langchain_core.tools import tool as langchain_tool
-        
-        langchain_tools = []
-        for t in self.tools:
-            # 创建异步函数包装器
-            async def tool_wrapper(tool_instance=t, **kwargs):
-                result = await tool_instance.execute(kwargs)
-                # 提取文本内容
-                if result and len(result) > 0:
-                    return result[0].text
-                return "执行完成，但没有返回结果"
-            
-            # 使用 tool 装饰器
-            lc_tool = langchain_tool(
-                name=t.name,
-                description=t.description,
-                args_schema=None  # 暂时不使用严格的 schema
-            )(tool_wrapper)
-            
-            langchain_tools.append(lc_tool)
-        
-        # 创建 ReAct Agent
-        self.agent_executor = create_agent(
-            self.llm,
-            langchain_tools,
-            state_modifier=AGENT_EXECUTOR_SYSTEM_PROMPT
+    return ChatOpenAI(
+        model=llm_model,
+        base_url=llm_base_url,
+        api_key=llm_api_key,
+    )
+
+
+# ============= Planner =============
+planner_prompt = ChatPromptTemplate.from_messages([
+    ("system", """你是一个专业的数据分析任务规划师，擅长将复杂的数据分析需求拆解为清晰的执行步骤。
+
+## 可用工具
+1. **get_table_schema** - 获取数据库表结构
+   - 不带参数：获取所有表列表
+   - 指定表名：获取该表的详细字段信息
+   
+2. **search_knowledge_graph** - 搜索知识图谱（历史 SQL、业务逻辑）
+   - 查找相似的历史查询
+   - 了解表和字段的业务含义
+   
+3. **execute_sql_query** - 执行 SQL 查询
+   - 支持 SELECT 查询
+   - 自动添加 LIMIT 保护
+
+## 规划原则
+1. 在生成 SQL 前，**务必**先使用 get_table_schema 确认表名和字段
+2. 对于复杂业务逻辑，使用 search_knowledge_graph 参考历史查询
+3. 复杂查询应该分步骤验证
+4. 每个步骤应该清晰、具体、可执行
+
+## 示例步骤
+- "使用 get_table_schema 获取所有表列表，找到与放款相关的表"
+- "使用 get_table_schema('orders') 查看 orders 表的字段结构"
+- "使用 search_knowledge_graph 搜索'如何计算放款金额'的历史查询"
+- "执行 SQL: SELECT COUNT(*) FROM orders WHERE date = '2024-01-01'"
+
+## 重要：输出格式
+你必须返回一个 JSON 对象，包含 steps 数组，每个元素是一个步骤的文字描述。
+注意：steps 是字符串数组，不是工具调用！
+
+正确示例：
+{{"steps": ["使用 get_table_schema 获取所有表列表", "根据表名查询相关数据"]}}
+
+错误示例（不要这样）：
+{{"tool": "get_table_schema", "args": []}}
+"""),
+    ("placeholder", "{messages}"),
+])
+
+# ============= Replanner =============
+replanner_prompt = ChatPromptTemplate.from_template("""你是一个数据分析任务重规划师。
+根据已完成的步骤和当前状态，决定接下来的行动。
+
+原始目标: {input}
+原始计划: {plan}
+已完成步骤: {past_steps}
+
+## 决策原则
+- 如果已经获得足够信息可以回答用户问题，返回 Response
+- 如果任务未完成或需要修正，返回更新后的 Plan
+- 如果 SQL 执行失败，分析错误并修正
+
+## 输出格式
+请以 JSON 格式返回，二选一：
+- 结束任务：{{"action": {{"response": "最终回答内容"}}}}
+- 继续执行：{{"action": {{"steps": ["步骤1", "步骤2", ...]}}}}
+""")
+
+
+# ============= 延迟初始化（避免模块加载时调用 LLM） =============
+_planner = None
+_replanner = None
+_agent_executor = None
+
+
+def get_planner():
+    """延迟获取 Planner"""
+    global _planner
+    if _planner is None:
+        # 使用 json_mode 避免某些模型返回尾部字符的问题
+        _planner = planner_prompt | get_llm().with_structured_output(
+            Plan, 
+            method="json_mode"
         )
-        
-        logger.info("  ✓ Agent 执行器已创建")
-    
-    def _initialize_graph(self):
-        """初始化 LangGraph 工作流"""
-        workflow = StateGraph(DataAnalystState)
-        
-        # 添加节点
-        workflow.add_node("planner", self.plan_step)
-        workflow.add_node("agent", self.execute_step)
-        workflow.add_node("replan", self.replan_step)
-        
-        # 添加边
-        workflow.add_edge(START, "planner")
-        workflow.add_edge("planner", "agent")
-        workflow.add_edge("agent", "replan")
-        
-        # 条件边：决定继续还是结束
-        workflow.add_conditional_edges(
-            "replan",
-            self.should_end,
-            {
-                "continue": "agent",
-                "end": END
-            }
+    return _planner
+
+
+def get_replanner():
+    """延迟获取 Replanner"""
+    global _replanner
+    if _replanner is None:
+        _replanner = replanner_prompt | get_llm().with_structured_output(
+            Act,
+            method="json_mode"
         )
-        
-        # 编译
-        self.app = workflow.compile()
-        logger.info("  ✓ LangGraph 工作流已编译")
-    
-    async def plan_step(self, state: DataAnalystState) -> Dict:
-        """规划步骤"""
-        logger.debug(f"规划步骤 - 输入: {state['input']}")
-        messages = [HumanMessage(content=state["input"])]
-        plan = await (planner_prompt | self.llm.with_structured_output(Plan)).ainvoke(
-            {"messages": messages}
+    return _replanner
+
+
+def get_agent_executor():
+    """延迟获取 Agent Executor"""
+    global _agent_executor
+    if _agent_executor is None:
+        _agent_executor = create_agent(
+            model=os.getenv("LLM_MODEL"),
+            api_key=os.getenv("LLM_API_KEY"),
+            base_url=os.getenv("LLM_BASE_URL"),
+            tools=[execute_sql_query, search_knowledge_graph, get_table_schema]
         )
-        logger.info(f"生成执行计划，共 {len(plan.steps)} 步")
-        return {"plan": plan.steps}
+    return _agent_executor
+
+
+# ============= Workflow 节点 =============
+async def plan_step(state: PlanExecute):
+    """规划步骤"""
+    plan = await get_planner().ainvoke({"messages": [("user", state["input"])]})
+    return {"plan": plan.steps}
+
+
+async def execute_step(state: PlanExecute):
+    """执行步骤"""
+    plan = state["plan"]
+    plan_str = "\n".join(f"{i+1}. {step}" for i, step in enumerate(plan))
+    task = plan[0]
     
-    async def execute_step(self, state: DataAnalystState) -> Dict:
-        """执行步骤"""
-        plan = state["plan"]
-        plan_str = "\n".join(f"{i+1}. {step}" for i, step in enumerate(plan))
-        
-        # 当前任务
-        task = plan[0]
-        logger.info(f"执行步骤: {task}")
-        
-        task_formatted = f"""对于以下计划：
+    task_formatted = f"""根据以下计划执行第一步:
 {plan_str}
 
-你当前需要执行步骤 1: {task}
+当前任务: {task}
 
-用户原始问题: {state['input']}
-"""
-        
-        # 调用 Agent Executor
-        response = await self.agent_executor.ainvoke({
-            "messages": [HumanMessage(content=task_formatted)]
-        })
-        
-        # 提取最后的消息
-        last_message = response["messages"][-1].content if response.get("messages") else "执行完成"
-        logger.debug(f"步骤执行结果: {last_message[:200]}...")
-        
-        return {
-            "past_steps": [(task, last_message)]
-        }
+请使用可用工具完成这个任务。"""
     
-    async def replan_step(self, state: DataAnalystState) -> Dict:
-        """重新规划步骤"""
-        output = await (replanner_prompt | self.llm.with_structured_output(Act)).ainvoke(state)
-        
-        if isinstance(output.action, Response):
-            # 结束，返回响应
-            return {"response": output.action.response}
-        else:
-            # 继续，更新计划
-            return {"plan": output.action.steps}
-    
-    def should_end(self, state: DataAnalystState) -> Literal["continue", "end"]:
-        """判断是否应该结束"""
-        if "response" in state and state["response"]:
-            return "end"
-        else:
-            return "continue"
-    
-    async def analyze(
-        self,
-        question: str,
-        database: str = "singa_bi",
-        use_redash: bool = False,
-        max_iterations: int = 10
-    ) -> str:
-        """
-        分析数据问题
-        
-        Args:
-            question: 用户问题
-            database: 数据库名称
-            use_redash: 是否使用 Redash 执行
-            max_iterations: 最大迭代次数
-        
-        Returns:
-            分析结果
-        """
-        # 构建输入
-        inputs = {
-            "input": f"数据库: {database}\n问题: {question}"
-        }
-        
-        # 配置
-        config = {
-            "recursion_limit": max_iterations
-        }
-        
-        try:
-            logger.info(f"开始分析问题: {question}")
-            # 执行工作流
-            final_state = await self.app.ainvoke(inputs, config=config)
-            
-            # 返回最终响应
-            response = final_state.get("response", "未能生成响应")
-            logger.info("分析完成")
-            return response
-        
-        except Exception as e:
-            logger.error(f"执行失败: {str(e)}", exc_info=True)
-            return f"执行失败: {str(e)}"
-    
-    def get_graph_image(self) -> bytes:
-        """获取工作流图"""
-        try:
-            return self.app.get_graph().draw_mermaid_png()
-        except Exception:
-            return b""
-
-
-# ============= 便捷函数 =============
-def create_data_analyst_agent(
-    mysql_url: Optional[str] = None,
-    redash_url: Optional[str] = None,
-    redash_api_key: Optional[str] = None,
-    llm_model: str = "gpt-4",
-    llm_api_key: Optional[str] = None,
-    llm_base_url: Optional[str] = None,
-    lightrag_url: Optional[str] = None
-) -> DataAnalystAgent:
-    """
-    快速创建数据分析师 Agent
-    
-    Args:
-        mysql_url: MySQL 连接字符串
-        redash_url: Redash 服务地址
-        redash_api_key: Redash API 密钥
-        llm_model: LLM 模型名称
-        llm_api_key: LLM API 密钥
-        llm_base_url: LLM API Base URL（可选，用于代理或私有部署）
-        lightrag_url: LightRAG 服务地址
-    
-    Returns:
-        DataAnalystAgent 实例
-    """
-    llm_config = {
-        'model': llm_model,
-        'api_key': llm_api_key
-    }
-    if llm_base_url:
-        llm_config['base_url'] = llm_base_url
-    
-    return DataAnalystAgent(
-        mysql_config={'db_url': mysql_url} if mysql_url else {},
-        redash_config={
-            'redash_url': redash_url,
-            'api_key': redash_api_key
-        } if redash_url and redash_api_key else {},
-        llm_config=llm_config,
-        lightrag_config={
-            'api_url': lightrag_url
-        } if lightrag_url else {}
+    agent_response = await get_agent_executor().ainvoke(
+        {"messages": [("user", task_formatted)]}
     )
+    
+    return {
+        "past_steps": [(task, agent_response["messages"][-1].content)],
+    }
+
+
+async def replan_step(state: PlanExecute):
+    """重新规划"""
+    output = await get_replanner().ainvoke(state)
+    
+    if isinstance(output.action, Response):
+        return {"response": output.action.response}
+    else:
+        return {"plan": output.action.steps}
+
+
+def should_end(state: PlanExecute):
+    """判断是否结束"""
+    if "response" in state and state["response"]:
+        return END
+    else:
+        return "agent"
+
+
+# ============= 构建 Workflow =============
+workflow = StateGraph(PlanExecute)
+
+# 添加节点
+workflow.add_node("planner", plan_step)
+workflow.add_node("agent", execute_step)
+workflow.add_node("replan", replan_step)
+
+# 添加边
+workflow.add_edge(START, "planner")
+workflow.add_edge("planner", "agent")
+workflow.add_edge("agent", "replan")
+workflow.add_conditional_edges(
+    "replan",
+    should_end,
+    ["agent", END],
+)
+
+# 编译
+app = workflow.compile()
+
+
+# ============= 主函数（用于测试） =============
+async def main():
+    """测试函数"""
+    config = {"recursion_limit": 50}
+    inputs = {"input": "查询 singa_bi 数据库中有多少个表"}
+    
+    print("开始执行...")
+    async for event in app.astream(inputs, config=config):
+        for k, v in event.items():
+            if k != "__end__":
+                print(f"\n=== {k} ===")
+                print(v)
+
+
+if __name__ == "__main__":
+    import asyncio
+    asyncio.run(main())
