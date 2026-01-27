@@ -74,7 +74,7 @@ DB_URL=mysql+pymysql://username:password@localhost:3306/singa_bi?charset=utf8mb4
   - `"hybrid"`: 结合 local 和 global 方法
   - `"mix"`: 集成知识图谱检索和向量搜索（**推荐**，默认）
   - `"bypass"`: 直接 LLM 查询，不使用知识检索
-- `top_k` (int, 可选): 返回结果数量，默认 5（注意：LightRAG 可能不支持此参数）
+- `top_k` (int, 可选): 返回结果数量，默认 5
 
 **返回格式：**
 ```json
