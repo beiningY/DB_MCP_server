@@ -23,8 +23,8 @@ def format_table_info(table: dict, online_dict: dict = None) -> str:
     """
     table_name = table.get("table_name", "")
     table_comment = table.get("table_comment", "")
-    business_domain = table.get("business_domain", "")
-    granularity = table.get("granularity", "")
+    #business_domain = table.get("business_domain", "")
+    #granularity = table.get("granularity", "")
     
     # 检查在线字典是否有额外信息
     extra_info = None
@@ -42,8 +42,6 @@ def format_table_info(table: dict, online_dict: dict = None) -> str:
     lines = [
         f"【表名】{table_name}",
         f"【表注释】{table_comment}" if table_comment else "",
-        f"【业务域】{business_domain}" if business_domain else "",
-        f"【粒度】{granularity}" if granularity else "",
         "",
         "【字段列表】"
     ]
@@ -130,7 +128,7 @@ def get_table_schema(
     online_dict_path = Path("metadata/online_dictionary.json")
     
     if not metadata_path.exists():
-        return f"❌ 元数据文件不存在：{metadata_path}"
+        return f"元数据文件不存在：{metadata_path}"
     
     try:
         # 读取元数据
@@ -151,7 +149,7 @@ def get_table_schema(
         # ====== 如果未指定表名，返回所有表的摘要 ======
         if not table_name:
             lines = [
-                f"📊 数据库 {database} 表结构摘要",
+                f"数据库 {database} 表结构摘要",
                 f"共 {len(tables)} 个表",
                 "=" * 60,
                 ""
@@ -187,7 +185,7 @@ def get_table_schema(
             
             lines.append("")
             lines.append("=" * 60)
-            lines.append("💡 提示: 使用 get_table_schema('表名') 查看具体表的详细结构")
+            lines.append("提示: 使用 get_table_schema('表名') 查看具体表的详细结构")
             
             return "\n".join(lines)
         
@@ -208,7 +206,7 @@ def get_table_schema(
                 if table_name_lower in t_name.lower():
                     similar_tables.append(t_name)
             
-            msg = f"❌ 表 '{table_name}' 不存在\n"
+            msg = f"表 '{table_name}' 不存在\n"
             if similar_tables:
                 msg += f"\n你可能想查找以下表：\n"
                 for t in similar_tables[:10]:
@@ -225,7 +223,7 @@ def get_table_schema(
         return result
     
     except json.JSONDecodeError as e:
-        return f"❌ 元数据文件格式错误：{str(e)}"
+        return f"元数据文件格式错误：{str(e)}"
     
     except Exception as e:
-        return f"❌ 查询失败：{str(e)}"
+        return f"查询失败：{str(e)}"
