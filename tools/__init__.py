@@ -1,25 +1,14 @@
 """
-MCP 工具模块
-在此添加自定义工具
+数据分析师 Agent 工具模块
+提供数据库查询、知识图谱搜索、表结构获取等工具
 """
-from .base import BaseTool, ToolRegistry
-from .db_tools import DatabaseTools
-from .analyst_tools import (
-    MetadataSearchTool,
-    HistoricalQuerySearchTool,
-    SQLExecutorTool,
-    QueryOptimizationTool,
-    DataAnalysisTool
-)
+
+from .execute_sql_tool import execute_sql_query
+from .search_knowledge_tool import search_knowledge_graph
+from .get_table_schema_tool import get_table_schema
 
 __all__ = [
-    "BaseTool",
-    "ToolRegistry",
-    "DatabaseTools",
-    "MetadataSearchTool",
-    "HistoricalQuerySearchTool",
-    "SQLExecutorTool",
-    "QueryOptimizationTool",
-    "DataAnalysisTool",
+    "execute_sql_query",
+    "search_knowledge_graph",
+    "get_table_schema",
 ]
-

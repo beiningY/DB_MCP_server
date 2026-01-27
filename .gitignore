@@ -30,6 +30,7 @@ dist/
 
 # Logs / runtime
 *.log
+logs/
 
 # OS / editor / IDE
 .DS_Store
