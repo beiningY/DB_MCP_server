@@ -1,6 +1,6 @@
 """
 MCP Server 客户端测试脚本
-用于测试 MCP Server 的 SSE 连接、工具调用和资源读取
+用于测试 MCP Server 的 HTTP 连接、工具调用和资源读取
 
 使用方式：
     # 先启动服务器
@@ -20,15 +20,15 @@ project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
 
-async def test_mcp_client(server_url: str = "http://localhost:8080/sse"):
+async def test_mcp_client(server_url: str = "http://localhost:8000/mcp"):
     """
     测试 MCP 客户端连接
     
     Args:
-        server_url: MCP 服务器 SSE 端点地址
+        server_url: MCP 服务器 HTTP 端点地址
     """
     print("=" * 60)
-    print("MCP Server 客户端测试")
+    print("MCP Server 客户端测试 (HTTP)")
     print("=" * 60)
     print(f"服务器地址: {server_url}")
     print("")
@@ -36,7 +36,7 @@ async def test_mcp_client(server_url: str = "http://localhost:8080/sse"):
     try:
         # 导入 MCP 客户端库
         from mcp import ClientSession
-        from mcp.client.sse import sse_client
+        from mcp.client.streamable_http import streamablehttp_client
     except ImportError:
         print("✗ 错误: 未安装 mcp 库")
         print("  请运行: pip install mcp[cli]")
@@ -45,7 +45,7 @@ async def test_mcp_client(server_url: str = "http://localhost:8080/sse"):
     try:
         # 连接到 MCP 服务器
         print("[1/6] 连接到 MCP 服务器...")
-        async with sse_client(server_url) as (read, write):
+        async with streamablehttp_client(server_url) as (read, write, _):
             async with ClientSession(read, write) as session:
                 # 初始化会话
                 print("[2/6] 初始化会话...")
@@ -187,8 +187,8 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="MCP Server 测试脚本")
     parser.add_argument(
         "--url",
-        default="http://localhost:8080",
-        help="MCP 服务器地址（默认: http://localhost:8080）"
+        default="http://localhost:8000",
+        help="MCP 服务器地址（默认: http://localhost:8000）"
     )
     parser.add_argument(
         "--http-only",
@@ -208,11 +208,11 @@ if __name__ == "__main__":
     
     if not args.http_only and http_ok:
         print("\n")
-        # 测试 MCP 客户端
-        asyncio.run(test_mcp_client(f"{args.url}/sse"))
+        # 测试 MCP 客户端 (HTTP)
+        asyncio.run(test_mcp_client(f"{args.url}/mcp"))
     
     print("\n提示：")
     print("  - 运行此脚本前，请先启动 MCP 服务器: python server.py")
-    print("  - 使用 --http-only 仅测试 HTTP 端点")
+    print("  - 使用 --http-only 仅测试健康检查端点")
     print("  - 使用 --url 指定服务器地址")
     print("\n")

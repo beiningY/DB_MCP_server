@@ -1,103 +1,124 @@
 """
-MCP Server - 数据分析 Agent 服务
-使用 FastMCP 简化服务器创建，支持远程 SSE 连接
+DB Analysis MCP Server
+支持通过 Streamable HTTP 进行远程连接的 MCP 服务器
 """
 
 import os
-from typing import Optional
+from contextlib import asynccontextmanager
 
 from dotenv import load_dotenv
-from sqlalchemy import create_engine
-from sqlalchemy.engine import Engine
 from mcp.server.fastmcp import FastMCP
+from starlette.applications import Starlette
+from starlette.routing import Mount, Route
+from starlette.responses import JSONResponse
 import uvicorn
 
 # 加载环境变量
 load_dotenv()
 
-# ============= FastMCP Server 实例 =============
-mcp = FastMCP("db-analysis-server")
-
-# ============= 数据库连接 =============
-_engine: Optional[Engine] = None
+# 数据库连接（延迟初始化）
+_db_engine = None
 
 
-def get_db_engine() -> Optional[Engine]:
-    """获取数据库引擎（单例模式）"""
-    global _engine
-    if _engine is None:
-        db_url = os.getenv("DB_URL")
-        if not db_url:
-            return None
-        _engine = create_engine(
-            db_url,
-            pool_size=5,
-            max_overflow=10,
-            pool_pre_ping=True,
-            pool_recycle=3600
-        )
-    return _engine
+def get_db_engine():
+    """获取数据库连接引擎（单例模式）"""
+    global _db_engine
+    if _db_engine is None:
+        from sqlalchemy import create_engine
+        
+        db_url = os.getenv("DATABASE_URL")
+        if db_url:
+            _db_engine = create_engine(db_url)
+    return _db_engine
 
 
 def get_database_name() -> str:
-    """从 DB_URL 提取数据库名"""
-    db_url = os.getenv("DB_URL", "")
-    if "/" in db_url:
-        db_part = db_url.split("/")[-1]
-        if "?" in db_part:
-            return db_part.split("?")[0]
-        return db_part
-    return "unknown"
+    """获取当前数据库名称"""
+    return os.getenv("DATABASE_NAME", "default_db")
 
 
-# ============= 注册工具和资源 =============
+# 创建 MCP 服务器实例
+mcp = FastMCP(
+    name="DB Analysis MCP Server",
+    instructions="数据分析智能体服务器，提供数据查询和分析能力"
+)
+
+
+# 注册工具
 from .tool import register_tools
-from .resource import register_resources
-
 register_tools(mcp)
-# register_resources(mcp, get_database_name, get_db_engine)
 
 
-# ============= SSE App 缓存 =============
-_app = None
+# 健康检查端点
+async def health_check(request):
+    """健康检查端点"""
+    return JSONResponse({
+        "status": "healthy",
+        "service": "DB Analysis MCP Server",
+        "database": get_database_name()
+    })
 
 
-def get_app():
-    """获取 ASGI app（单例模式，用于 uvicorn 直接启动）"""
-    global _app
-    if _app is None:
-        _app = mcp.sse_app()
-    return _app
+# 根路径
+async def root(request):
+    """根路径信息"""
+    return JSONResponse({
+        "message": "MCP Server running",
+        "endpoints": {
+            "sse": "/sse - MCP SSE 连接端点",
+            "mcp": "/mcp - MCP HTTP 连接端点",
+            "health": "/health - 健康检查"
+        }
+    })
 
 
-# ============= 启动服务器 =============
+@asynccontextmanager
+async def lifespan(app):
+    """应用生命周期管理"""
+    # 启动时
+    print(f"🚀 MCP Server 启动中...")
+    print(f"📊 数据库: {get_database_name()}")
+    yield
+    # 关闭时
+    print("👋 MCP Server 关闭")
+
+
+# 创建 Starlette 应用，挂载 MCP 路由
+app = Starlette(
+    debug=True,
+    lifespan=lifespan,
+    routes=[
+        Route("/", endpoint=root),
+        Route("/health", endpoint=health_check),
+        # 挂载 MCP Streamable HTTP 路由
+        Mount("/mcp", app=mcp.streamable_http_app()),
+        # 挂载 MCP SSE 路由（兼容旧客户端）
+        Mount("/", app=mcp.sse_app()),
+    ],
+)
+
+
 def start_server():
-    """启动 MCP 服务器（SSE 模式）"""
+    """启动 MCP 服务器"""
+    port = int(os.getenv("MCP_PORT", "8000"))
     host = os.getenv("MCP_HOST", "0.0.0.0")
-    port = int(os.getenv("MCP_PORT", "8080"))
-    database = get_database_name()
     
-    db_status = "已连接" if get_db_engine() else "未配置"
+    print("=" * 50)
+    print("DB Analysis MCP Server")
+    print("=" * 50)
+    print(f"🌐 地址: http://{host}:{port}")
+    print(f"📡 SSE 端点: http://{host}:{port}/sse")
+    print(f"📡 HTTP 端点: http://{host}:{port}/mcp")
+    print(f"❤️  健康检查: http://{host}:{port}/health")
+    print("=" * 50)
     
-    print(f"""
-╔══════════════════════════════════════════════════════════╗
-║           DB Analysis MCP Server (FastMCP)               ║
-╠══════════════════════════════════════════════════════════╣
-║  远程连接地址: http://{host}:{port}/sse
-╠══════════════════════════════════════════════════════════╣
-║  数据库: {database} ({db_status})
-╠══════════════════════════════════════════════════════════╣
-║  工具:                                                   ║
-║    - ask_data_agent: 数据分析智能体                      ║
-║  资源:                                                   ║
-║    - db://{database}/overview: 数据库概览                
-║    - db://{database}/tables: 所有表结构                  
-╚══════════════════════════════════════════════════════════╝
-    """)
-    
-    # 使用缓存的 app 实例
-    uvicorn.run(get_app(), host=host, port=port)
+    uvicorn.run(
+        app,
+        host=host,
+        port=port,
+        log_level="info"
+    )
 
 
-# 导出 app 供 uvicorn 直接使用
-app = get_app()
+if __name__ == "__main__":
+    start_server()
