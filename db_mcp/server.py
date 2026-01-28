@@ -8,6 +8,7 @@ from contextlib import asynccontextmanager
 
 from dotenv import load_dotenv
 from mcp.server.fastmcp import FastMCP
+from mcp.server.transport_security import TransportSecuritySettings
 from starlette.applications import Starlette
 from starlette.routing import Mount, Route
 from starlette.responses import JSONResponse
@@ -40,7 +41,12 @@ def get_database_name() -> str:
 # 创建 MCP 服务器实例
 mcp = FastMCP(
     name="DB Analysis MCP Server",
-    instructions="数据分析智能体服务器，提供数据查询和分析能力"
+    instructions="数据分析智能体服务器，提供数据查询和分析能力",
+    transport_security=TransportSecuritySettings(
+        enable_dns_rebinding_protection=False,   # 关闭 DNS rebinding 限制
+        allowed_hosts=["*"],                     # 允许所有 host 访问
+        allowed_origins=["*"]                    # 允许所有跨域请求
+    )
 )
 
 
