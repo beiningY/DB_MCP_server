@@ -45,7 +45,7 @@ dev = [
 
 
 [project.scripts]
-db-server = "server:main"
+db-mcp-server = "server:main"
 
 [build-system]
 requires = ["hatchling"]

@@ -33,7 +33,7 @@ def search_knowledge_graph(
             - "hybrid": 结合 local 和 global 方法
             - "mix": 集成知识图谱检索和向量搜索（推荐）
             - "bypass": 直接 LLM 查询，不使用知识检索
-        top_k: 返回的结果数量，默认 5（注意：LightRAG 可能不支持此参数）
+        top_k: 返回的结果数量，默认 5
     
     Returns:
         JSON 格式的搜索结果，包含：
@@ -44,7 +44,7 @@ def search_knowledge_graph(
     
     Examples:
         >>> search_knowledge_graph.invoke({"query": "如何计算 NPL 率"})
-        >>> search_knowledge_graph.invoke({"query": "temp_rc_model_daily 表", "mode": "local"})
+        >>> search_knowledge_graph.invoke({"query": "temp_rc_model_daily 表", "mode": "mix"})
         >>> search_knowledge_graph.invoke({"query": "查询昨天的放款金额", "top_k": 3})
     """
     # 参数验证

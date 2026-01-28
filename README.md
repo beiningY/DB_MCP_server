@@ -86,38 +86,33 @@ docker-compose down
 
 ```bash
 # 使用 uv 运行（推荐）
-uv run python main.py
+uv run python server.py
 
 # 或直接运行
-python main.py
+python server.py
 
-# 自定义端口
-python main.py --port 8000
+# 自定义端口（通过环境变量）
+MCP_PORT=8000 python server.py
 
-# 开发模式（热重载）
-python main.py --reload
-
-# 查看帮助
-python main.py --help
+# 自定义主机
+MCP_HOST=0.0.0.0 MCP_PORT=8080 python server.py
 ```
 
 ### 5. 验证启动
 
 ```bash
 # 健康检查
-curl http://localhost:8000/health
-
-# 查看服务器信息
-curl http://localhost:8000/
+curl http://localhost:8080/health
 ```
 
 预期返回：
 ```json
 {
-  "status": "healthy",
-  "server": "DB MCP Server",
-  "version": "0.1.0",
-  "tools": ["execute_sql", "get_table_schema", "search_knowledge"]
+  "status": "ok",
+  "server": "db-analysis-server",
+  "version": "1.0.0",
+  "tools": ["ask_data_agent"],
+  "resources": ["db://singa_bi/overview", "db://singa_bi/tables"]
 }
 ```
 
@@ -125,18 +120,39 @@ curl http://localhost:8000/
 
 | 工具名 | 功能 | 依赖服务 |
 |--------|------|----------|
+| `ask_data_agent` | 数据分析智能体（自然语言交互） | MySQL + LLM |
 | `execute_sql` | 执行 SQL 查询（仅 SELECT） | MySQL |
 | `get_table_schema` | 获取表结构信息 | 元数据文件 |
 | `search_knowledge` | 搜索知识图谱 | LightRAG（可选） |
 
+### ask_data_agent 工具
+
+智能数据分析 Agent，支持自然语言交互：
+
+```python
+# 示例调用
+await session.call_tool("ask_data_agent", {"query": "查询最近7天的订单数量"})
+await session.call_tool("ask_data_agent", {"query": "还款率是如何计算的"})
+```
+
+Agent 会自动：
+1. 理解用户问题
+2. 查询表结构获取相关表信息
+3. 搜索知识图谱查找历史 SQL
+4. 生成并执行 SQL 查询
+5. 整理结果返回
+
 ## 资源说明
 
-| URI | 说明 | 来源 |
-|-----|------|------|
-| `metadata://online_dictionary` | 在线数据字典 | `metadata/online_dictionary.json` |
-| `metadata://singa_bi` | BI 元数据 | `metadata/singa_bi_metadata.json` |
-| `metadata://redash_queries` | Redash 历史查询 | `metadata/redash_queries.json` |
-| `info://server/status` | 服务器状态 | 动态生成 |
+资源信息**实时从数据库获取**，而非本地文件。
+
+| URI | 说明 | 数据来源 |
+|-----|------|----------|
+| `db://{database}/overview` | 数据库概览（表列表） | 实时查询 `information_schema` |
+| `db://{database}/tables` | 所有表完整 Schema | 实时查询数据库 |
+| `db://{database}/table/{name}` | 单表详细结构 | 实时查询（含索引、外键） |
+
+**注意**: `{database}` 会自动替换为 `DB_URL` 中配置的数据库名。
 
 ## 客户端配置
 
@@ -147,8 +163,8 @@ curl http://localhost:8000/
 ```json
 {
   "mcpServers": {
-    "db-server": {
-      "url": "http://localhost:8000/sse"
+    "db-analysis": {
+      "url": "http://localhost:8080/sse"
     }
   }
 }
@@ -161,8 +177,8 @@ curl http://localhost:8000/
 ```json
 {
   "mcpServers": {
-    "db-server": {
-      "url": "http://localhost:8000/sse"
+    "db-analysis": {
+      "url": "http://localhost:8080/sse"
     }
   }
 }
@@ -176,7 +192,7 @@ from mcp import ClientSession
 from mcp.client.sse import sse_client
 
 async def main():
-    async with sse_client("http://localhost:8000/sse") as (read, write):
+    async with sse_client("http://localhost:8080/sse") as (read, write):
         async with ClientSession(read, write) as session:
             await session.initialize()
             
@@ -184,9 +200,20 @@ async def main():
             tools = await session.list_tools()
             print("可用工具:", [t.name for t in tools.tools])
             
-            # 调用工具
-            result = await session.call_tool("get_table_schema", {})
+            # 列出资源
+            resources = await session.list_resources()
+            print("可用资源:", [r.uri for r in resources.resources])
+            
+            # 调用 Agent 工具
+            result = await session.call_tool(
+                "ask_data_agent", 
+                {"query": "有哪些用户相关的表？"}
+            )
             print(result.content[0].text)
+            
+            # 读取资源
+            overview = await session.read_resource("db://singa_bi/overview")
+            print(overview.contents[0].text)
 
 asyncio.run(main())
 ```
@@ -195,7 +222,6 @@ asyncio.run(main())
 
 | 端点 | 方法 | 说明 |
 |------|------|------|
-| `/` | GET | 服务器信息 |
 | `/health` | GET | 健康检查 |
 | `/sse` | GET | SSE 连接端点（MCP 客户端使用） |
 | `/messages/` | POST | MCP 消息处理 |
@@ -204,25 +230,28 @@ asyncio.run(main())
 
 ```
 DB_MCP_server/
-├── server.py              # MCP 服务器核心（工具和资源定义）
-├── main.py                # 服务器启动入口
+├── server.py              # MCP 服务器（工具、资源、SSE 端点）
 ├── logger_config.py       # 日志配置
 ├── pyproject.toml         # 项目依赖
 ├── docker-compose.yml     # Neo4j + Qdrant 服务
 │
-├── tools/                 # 数据工具
+├── agent/                 # AI Agent
+│   ├── data_simple_agent.py       # 数据分析 Agent（ReAct 模式）
+│   ├── data_analyst_agent.py      # 高级分析 Agent
+│   └── prompts.py                 # Agent 提示词
+│
+├── tools/                 # 数据工具（Agent 内部使用）
 │   ├── execute_sql_tool.py        # SQL 执行
 │   ├── get_table_schema_tool.py   # 表结构查询
 │   └── search_knowledge_tool.py   # 知识图谱搜索
 │
 ├── metadata/              # 元数据文件
-│   ├── online_dictionary.json
-│   ├── singa_bi_metadata.json
-│   └── redash_queries.json
+│   ├── online_dictionary.json     # 在线数据字典
+│   ├── singa_bi_metadata.json     # BI 表元数据
+│   └── redash_queries.json        # Redash 历史查询
 │
-├── agent/                 # AI Agent（可选）
 ├── data_pipeline/         # 数据管道工具
-└── webapp/                # Web 应用（可选）
+└── webapp/                # Web 应用界面
 ```
 
 ## 命令行参数
