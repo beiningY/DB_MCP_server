@@ -1,5 +1,6 @@
 """
 数据分析 Agent 展示页面 - FastAPI 后端
+支持动态数据库连接
 """
 
 import os
@@ -16,64 +17,59 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-# 导入 Agent
-from langchain_openai import ChatOpenAI
-from langchain.agents import create_agent
-
-import sys
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from tools import execute_sql_query, search_knowledge_graph, get_table_schema
+# 导入工具
+from tools import execute_sql_query, get_table_schema
 
 
-# ============= 配置 =============
-SYSTEM_PROMPT = """你是一个专业的数据分析智能体。
-
-## 可用工具
-1. **get_table_schema** - 获取数据库表结构信息
-2. **search_knowledge_graph** - 搜索知识图谱，查找历史 SQL 和业务逻辑
-3. **execute_sql_query** - 执行 SQL 查询（仅支持 SELECT）
-
-## 工作流程
-1. 理解用户问题
-2. 如有需要，先用 get_table_schema 了解表结构
-3. 用 search_knowledge_graph 查找相关历史查询和业务逻辑
-4. 生成并执行 SQL 查询
-5. 整理结果回答用户
-
-请用清晰、专业的方式回答用户的数据分析问题。
-"""
+# ============= 请求/响应模型 =============
+class ChatRequest(BaseModel):
+    question: str
+    # 数据库连接参数
+    host: str = "localhost"
+    port: int = 3306
+    username: str = "root"
+    password: str = ""
+    database: str = "information_schema"
 
 
-# ============= 模型和 Agent =============
-_agent = None
+class ChatResponse(BaseModel):
+    answer: str
+    tool_calls: list = []
 
-def get_agent():
-    """延迟初始化 Agent"""
-    global _agent
-    if _agent is None:
-        model = ChatOpenAI(
-            model=os.getenv("LLM_MODEL", "gpt-4"),
-            api_key=os.getenv("LLM_API_KEY"),
-            base_url=os.getenv("LLM_BASE_URL"),
-        )
-        tools = [execute_sql_query, search_knowledge_graph, get_table_schema]
-        _agent = create_agent(model=model, tools=tools, system_prompt=SYSTEM_PROMPT)
-    return _agent
+
+class SQLRequest(BaseModel):
+    sql: str
+    host: str = "localhost"
+    port: int = 3306
+    username: str = "root"
+    password: str = ""
+    database: str = "information_schema"
+    limit: Optional[int] = 100
+
+
+class SchemaRequest(BaseModel):
+    table_name: Optional[str] = None
+    host: str = "localhost"
+    port: int = 3306
+    username: str = "root"
+    password: str = ""
+    database: str = "information_schema"
 
 
 # ============= FastAPI App =============
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """应用生命周期"""
-    print("🚀 数据分析 Agent 服务启动...")
+    print("🚀 数据分析服务启动...")
+    print("🔌 支持动态数据库连接")
     yield
     print("👋 服务关闭")
 
 
 app = FastAPI(
-    title="数据分析 Agent",
-    description="基于 LLM 的智能数据分析助手",
-    version="1.0.0",
+    title="数据分析工具",
+    description="支持动态数据库连接的数据分析工具",
+    version="2.0.0",
     lifespan=lifespan
 )
 
@@ -87,16 +83,6 @@ app.add_middleware(
 )
 
 
-# ============= 请求/响应模型 =============
-class ChatRequest(BaseModel):
-    question: str
-    
-
-class ChatResponse(BaseModel):
-    answer: str
-    tool_calls: list = []
-
-
 # ============= API 路由 =============
 @app.get("/", response_class=HTMLResponse)
 async def index():
@@ -108,36 +94,103 @@ async def index():
 
 @app.post("/api/chat", response_model=ChatResponse)
 async def chat(request: ChatRequest):
-    """处理对话请求"""
+    """处理对话请求（简化版，直接调用工具）"""
     if not request.question.strip():
         raise HTTPException(status_code=400, detail="问题不能为空")
-    
+
     try:
-        agent = get_agent()
-        result = await asyncio.to_thread(
-            agent.invoke,
-            {"messages": [{"role": "user", "content": request.question}]}
-        )
-        
-        # 提取回答和工具调用
-        messages = result.get("messages", [])
-        answer = ""
-        tool_calls = []
-        
-        for msg in messages:
-            if hasattr(msg, "content") and msg.content:
-                # 最后一条有内容的消息作为回答
-                if hasattr(msg, "type") and msg.type == "ai":
-                    answer = msg.content
-            if hasattr(msg, "tool_calls") and msg.tool_calls:
-                for tc in msg.tool_calls:
-                    tool_calls.append({
-                        "name": tc.get("name", ""),
-                        "args": tc.get("args", {})
-                    })
-        
-        return ChatResponse(answer=answer, tool_calls=tool_calls)
-        
+        # 简单处理：根据问题类型决定调用哪个工具
+        question_lower = request.question.lower()
+
+        if "表" in request.question and ("结构" in request.question or "字段" in request.question):
+            # 查询表结构
+            # 提取表名（简单处理）
+            table_name = None
+            for word in request.question.split():
+                if word not in ["查询", "表", "结构", "的", "是", "有什么", "有哪些", "字段", "显示"]:
+                    table_name = word
+                    break
+
+            result = get_table_schema.invoke({
+                "table_name": table_name,
+                "host": request.host,
+                "port": request.port,
+                "username": request.username,
+                "password": request.password,
+                "database": request.database
+            })
+            answer = result
+
+        elif "select" in question_lower or "sql" in question_lower:
+            # 执行 SQL
+            sql = request.question
+            result = execute_sql_query.invoke({
+                "sql": sql,
+                "host": request.host,
+                "port": request.port,
+                "username": request.username,
+                "password": request.password,
+                "database": request.database,
+                "limit": 100
+            })
+            answer = result
+
+        else:
+            # 获取所有表列表
+            result = get_table_schema.invoke({
+                "table_name": None,
+                "host": request.host,
+                "port": request.port,
+                "username": request.username,
+                "password": request.password,
+                "database": request.database
+            })
+            answer = result
+
+        return ChatResponse(answer=answer, tool_calls=[])
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/execute-sql")
+async def execute_sql(request: SQLRequest):
+    """执行 SQL 查询"""
+    try:
+        result = execute_sql_query.invoke({
+            "sql": request.sql,
+            "host": request.host,
+            "port": request.port,
+            "username": request.username,
+            "password": request.password,
+            "database": request.database,
+            "limit": request.limit
+        })
+        return {"result": result}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/schema")
+async def get_schema(
+    host: str = "localhost",
+    port: int = 3306,
+    username: str = "root",
+    password: str = "",
+    database: str = "information_schema",
+    table_name: Optional[str] = None
+):
+    """获取数据库表结构"""
+    try:
+        result = get_table_schema.invoke({
+            "table_name": table_name,
+            "host": host,
+            "port": port,
+            "username": username,
+            "password": password,
+            "database": database
+        })
+        return {"result": result}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -145,7 +198,12 @@ async def chat(request: ChatRequest):
 @app.get("/api/health")
 async def health():
     """健康检查"""
-    return {"status": "ok"}
+    return {
+        "status": "ok",
+        "service": "DB Analysis API",
+        "version": "2.0.0",
+        "features": ["dynamic_database_connection", "real_time_schema_query"]
+    }
 
 
 # ============= 启动入口 =============

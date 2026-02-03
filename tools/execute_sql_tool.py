@@ -1,31 +1,121 @@
 """
 SQL 执行工具
-支持直接连接 MySQL 数据库执行查询
+支持动态连接 MySQL 数据库执行查询
+集成 SQL 安全验证、连接池和统一错误处理
 """
 
-import os
 import json
 import time
+import traceback
 from typing import Dict, Any, Optional
-from sqlalchemy import create_engine, text
+from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 from langchain_core.tools import tool
+
+# 导入安全、连接池和错误处理模块
+from db_mcp.sql_validator import (
+    validate_sql,
+    SQLValidationError,
+    sanitize_limit
+)
+from db_mcp.connection_pool import get_engine
+from db_mcp.errors import (
+    format_error_response,
+    format_success_response,
+    ErrorCode,
+    DBConnectionError,
+    DBQueryError,
+    SQLSecurityError as SQLSecurityErrorClass
+)
+from db_mcp.logger import get_logger
+
+# 获取日志器
+logger = get_logger("mcp.tool.execute_sql")
+
+
+def _convert_value(value: Any) -> Any:
+    """
+    转换数据库值为 JSON 可序列化类型
+
+    Args:
+        value: 数据库返回的值
+
+    Returns:
+        转换后的值
+    """
+    if value is None:
+        return None
+
+    # 转换 Decimal 为 float
+    if hasattr(value, '__class__') and 'Decimal' in str(value.__class__):
+        return float(value)
+
+    # 转换日期时间为字符串
+    if hasattr(value, 'isoformat'):
+        return value.isoformat()
+
+    # 转换 bytes 为字符串
+    if isinstance(value, bytes):
+        try:
+            return value.decode('utf-8')
+        except UnicodeDecodeError:
+            return value.hex()
+
+    return value
+
+
+def _process_query_result(result) -> tuple[list, list]:
+    """
+    处理查询结果，转换为字典列表
+
+    Args:
+        result: SQLAlchemy 查询结果对象
+
+    Returns:
+        (data, columns) 元组
+    """
+    columns = list(result.keys())
+    rows = result.fetchall()
+
+    data = []
+    for row in rows:
+        row_dict = {}
+        for key, value in zip(columns, row):
+            row_dict[key] = _convert_value(value)
+        data.append(row_dict)
+
+    return data, columns
 
 
 @tool
 def execute_sql_query(
     sql: str,
-    database: str = "singa_bi",
+    host: str,
+    port: int = 3306,
+    username: str = "root",
+    password: str = "",
+    database: str = "information_schema",
     limit: Optional[int] = None
 ) -> str:
     """
-    执行 SQL 查询并返回结果
-    
+    执行 SQL 查询并返回结果（支持动态数据库连接）
+
+    功能特性：
+    - 仅允许 SELECT 查询（通过 SQL 解析器严格验证）
+    - 自动添加 LIMIT 保护（默认最多 100 行）
+    - 使用连接池提高性能
+    - 完整的错误处理和日志记录
+    - 自动转换数据类型（Decimal、datetime 等）
+
     Args:
         sql: 要执行的 SQL 查询语句（仅支持 SELECT 查询）
-        database: 目标数据库名称，默认 "singa_bi"
+        host: 数据库主机地址（必需）
+        port: 数据库端口，默认 3306
+        username: 数据库用户名，默认 "root"
+        password: 数据库密码，默认 ""
+        database: 目标数据库名称，默认 "information_schema"
         limit: 最大返回行数，默认 100。如果 SQL 中已有 LIMIT，则使用 SQL 中的值
-    
+
     Returns:
         JSON 格式的查询结果，包含：
         - success: 是否成功
@@ -34,119 +124,210 @@ def execute_sql_query(
         - row_count: 返回行数
         - execution_time: 执行时间（毫秒）
         - message: 提示信息或错误信息
-    
+
     Examples:
-        >>> execute_sql_query("SELECT * FROM users WHERE id = 1")
-        >>> execute_sql_query("SELECT COUNT(*) as cnt FROM orders", limit=1)
+        >>> execute_sql_query("SELECT * FROM users WHERE id = 1", host="localhost", database="mydb")
+        >>> execute_sql_query("SELECT COUNT(*) as cnt FROM orders", host="192.168.1.100", username="admin", password="pass123", database="shop", limit=1)
     """
-    # 基本参数验证
-    sql = sql.strip()
+    # ========== 1. 基本参数验证 ==========
+    sql = sql.strip() if sql else ""
     if not sql:
-        return json.dumps({
-            "success": False,
-            "message": "SQL 查询不能为空",
-            "data": [],
-            "columns": [],
-            "row_count": 0
-        }, ensure_ascii=False)
-    
-    # 安全检查：只允许 SELECT 查询
+        logger.warning("收到空的 SQL 查询")
+        return format_error_response(
+            "SQL 查询不能为空",
+            ErrorCode.INVALID_PARAMS
+        )
+
+    if not host:
+        logger.warning("缺少数据库主机地址")
+        return format_error_response(
+            "数据库主机地址 (host) 不能为空",
+            ErrorCode.MISSING_REQUIRED_PARAM
+        )
+
+    # 记录查询请求（不记录敏感信息）
+    logger.info(
+        f"收到 SQL 查询请求",
+        extra={
+            "host": host,
+            "database": database,
+            "sql_preview": sql[:100] if len(sql) > 100 else sql
+        }
+    )
+
+    # ========== 2. SQL 安全验证 ==========
+    try:
+        is_valid, error_msg = validate_sql(sql, strict_mode=True)
+        if not is_valid:
+            logger.warning(
+                f"SQL 安全检查失败: {error_msg}",
+                extra={
+                    "host": host,
+                    "database": database,
+                    "sql": sql[:200]
+                }
+            )
+            return format_error_response(
+                f"SQL 安全检查失败: {error_msg}",
+                ErrorCode.SQL_VALIDATION_ERROR
+            )
+    except SQLValidationError as e:
+        logger.warning(f"SQL 验证异常: {e.message}")
+        return format_error_response(
+            f"SQL 验证异常: {e.message}",
+            ErrorCode.SQL_VALIDATION_ERROR
+        )
+    except Exception as e:
+        logger.error(f"SQL 验证器异常: {e}", exc_info=True)
+        return format_error_response(
+            "SQL 验证器异常",
+            ErrorCode.UNKNOWN_ERROR
+        )
+
+    # ========== 3. 处理 LIMIT ==========
+    limit = sanitize_limit(limit)
+
+    # 检查 SQL 中是否已有 LIMIT
     sql_upper = sql.upper()
-    if not sql_upper.startswith("SELECT"):
-        return json.dumps({
-            "success": False,
-            "message": "仅支持 SELECT 查询，不允许执行修改语句（INSERT/UPDATE/DELETE/DROP 等）",
-            "data": [],
-            "columns": [],
-            "row_count": 0
-        }, ensure_ascii=False)
-    
-    # 自动添加 LIMIT 保护（如果没有）
-    if limit is None:
-        limit = 100
-    
     if "LIMIT" not in sql_upper:
         sql = f"{sql.rstrip(';')} LIMIT {limit}"
-    
-    # 获取数据库连接
-    db_url = os.getenv("DB_URL")
-    if not db_url:
-        return json.dumps({
-            "success": False,
-            "message": "数据库连接未配置，请设置 DB_URL 环境变量",
-            "data": [],
-            "columns": [],
-            "row_count": 0
-        }, ensure_ascii=False)
-    
+
+    # ========== 4. 获取数据库连接（使用连接池） ==========
+    engine = None
     try:
-        # 创建数据库引擎
-        engine = create_engine(
-            db_url,
-            pool_size=5,
-            max_overflow=10,
-            pool_pre_ping=True,
-            pool_recycle=3600
+        logger.debug(f"获取数据库引擎: {host}:{port}/{database}")
+        engine = get_engine(
+            host=host,
+            port=port,
+            username=username,
+            password=password,
+            database=database
         )
-        
+
+        # ========== 5. 执行查询 ==========
         start_time = time.time()
-        
-        # 执行查询
+
         with engine.connect() as conn:
             # 设置查询超时（30秒）
-            conn.execute(text("SET SESSION MAX_EXECUTION_TIME=30000"))
-            
+            try:
+                conn.execute(text("SET SESSION MAX_EXECUTION_TIME=30000"))
+            except Exception:
+                # 某些 MySQL 版本可能不支持此设置
+                logger.debug("无法设置 MAX_EXECUTION_TIME（可能是 MySQL 版本问题）")
+
             # 执行 SQL
             result = conn.execute(text(sql))
-            
-            # 获取列名
-            columns = list(result.keys())
-            
-            # 获取数据
-            rows = result.fetchall()
-            data = [dict(zip(columns, row)) for row in rows]
-            
-            # 处理特殊类型（日期、Decimal 等）
-            for row in data:
-                for key, value in row.items():
-                    if value is not None:
-                        # 转换 Decimal 为 float
-                        if hasattr(value, '__class__') and 'Decimal' in str(value.__class__):
-                            row[key] = float(value)
-                        # 转换日期时间为字符串
-                        elif hasattr(value, 'isoformat'):
-                            row[key] = value.isoformat()
-            
+
+            # 处理结果
+            data, columns = _process_query_result(result)
+
             execution_time = (time.time() - start_time) * 1000  # 转为毫秒
-            
-            return json.dumps({
-                "success": True,
-                "data": data,
-                "columns": columns,
-                "row_count": len(data),
-                "execution_time": round(execution_time, 2),
-                "message": f"查询成功，返回 {len(data)} 行数据"
-            }, ensure_ascii=False, default=str)
-    
+
+            # 记录成功日志
+            logger.info(
+                f"查询成功",
+                extra={
+                    "host": host,
+                    "database": database,
+                    "row_count": len(data),
+                    "execution_time_ms": round(execution_time, 2)
+                }
+            )
+
+            # 返回成功响应
+            return format_success_response(
+                data=data,
+                columns=columns,
+                message=f"查询成功，返回 {len(data)} 行数据",
+                execution_time=round(execution_time, 2)
+            )
+
     except SQLAlchemyError as e:
-        return json.dumps({
-            "success": False,
-            "message": f"SQL 执行错误: {str(e)}",
-            "data": [],
-            "columns": [],
-            "row_count": 0
-        }, ensure_ascii=False)
-    
+        # 数据库相关错误
+        error_msg = str(e)
+        logger.error(
+            f"数据库查询错误: {error_msg}",
+            extra={
+                "host": host,
+                "database": database,
+                "exception_type": type(e).__name__
+            },
+            exc_info=True
+        )
+
+        # 判断错误类型
+        error_msg_lower = error_msg.lower()
+        if "timeout" in error_msg_lower or "time" in error_msg_lower:
+            return format_error_response(
+                f"查询超时: {error_msg}",
+                ErrorCode.DB_TIMEOUT
+            )
+        elif "connection" in error_msg_lower:
+            return format_error_response(
+                f"数据库连接错误: {error_msg}",
+                ErrorCode.DB_CONNECTION_ERROR
+            )
+        else:
+            return format_error_response(
+                f"SQL 执行错误: {error_msg}",
+                ErrorCode.DB_QUERY_ERROR
+            )
+
     except Exception as e:
-        return json.dumps({
-            "success": False,
-            "message": f"未知错误: {str(e)}",
-            "data": [],
-            "columns": [],
-            "row_count": 0
-        }, ensure_ascii=False)
-    
-    finally:
-        # 关闭引擎
-        if 'engine' in locals():
-            engine.dispose()
+        # 其他未知错误
+        error_msg = str(e)
+        logger.error(
+            f"未知错误: {error_msg}",
+            extra={
+                "host": host,
+                "database": database,
+                "exception_type": type(e).__name__,
+                "traceback": traceback.format_exc()
+            },
+            exc_info=True
+        )
+
+        return format_error_response(
+            f"未知错误: {error_msg}",
+            ErrorCode.UNKNOWN_ERROR,
+            details={"type": type(e).__name__}
+        )
+
+
+# ============ 便捷函数 ============
+
+def execute_sql_safe(
+    sql: str,
+    host: str,
+    port: int = 3306,
+    username: str = "root",
+    password: str = "",
+    database: str = "information_schema",
+    limit: int = 100
+) -> Dict[str, Any]:
+    """
+    安全执行 SQL（返回字典而非 JSON 字符串）
+
+    Args:
+        sql: SQL 查询语句
+        host: 数据库主机
+        port: 数据库端口
+        username: 用户名
+        password: 密码
+        database: 数据库名
+        limit: 最大行数
+
+    Returns:
+        字典格式的查询结果
+    """
+    result = execute_sql_query(
+        sql=sql,
+        host=host,
+        port=port,
+        username=username,
+        password=password,
+        database=database,
+        limit=limit
+    )
+
+    return json.loads(result)
