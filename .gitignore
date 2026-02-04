@@ -51,4 +51,4 @@ data/*
 data.tar.gz
 ._docker-compose.yml
 
-data/*
+data_pipeline/*
