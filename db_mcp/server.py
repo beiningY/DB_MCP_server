@@ -43,12 +43,23 @@ from starlette.middleware import Middleware
 from starlette.middleware.base import BaseHTTPMiddleware
 import uvicorn
 
+from .logger import configure_logging, get_logger
+
 # ============================================================================
 # 全局变量
 # ============================================================================
 
 # 加载环境变量
 load_dotenv()
+
+# 配置日志（添加文件输出）
+_log_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "logs")
+os.makedirs(_log_dir, exist_ok=True)
+configure_logging(
+    level=os.getenv("LOG_LEVEL", "INFO"),
+    log_file=os.path.join(_log_dir, "mcp-server.log")
+)
+logger = get_logger("mcp.server")
 
 # 从环境变量读取预定��的数据库配置（可选）
 # 格式：JSON 对象，key 为 session 名称，value 为数据库配置
@@ -221,14 +232,14 @@ async def lifespan(app):
     启动时打印配置信息，关闭时清理资源。
     """
     # 启动时
-    print(f"🚀 MCP Server 启动中...")
-    print(f"🔌 支持动态数据库连接")
-    print(f"📋 支持 URL 参数配置: ?host=xxx&port=xxx&username=xxx&password=xxx&database=xxx")
+    logger.info("MCP Server 启动中...")
+    logger.info("支持动态数据库连接")
+    logger.info("支持 URL 参数配置: ?host=xxx&port=xxx&username=xxx&password=xxx&database=xxx")
 
     # 显示预定义的数据库配置
     configs = load_predefined_configs()
     if configs:
-        print(f"📋 预定义数据库配置: {list(configs.keys())}")
+        logger.info(f"预定义数据库配置: {list(configs.keys())}")
 
     yield
 
@@ -237,11 +248,11 @@ async def lifespan(app):
     try:
         from .connection_pool import close_all_pools
         close_all_pools()
-        print("🔌 连接池已清理")
+        logger.info("连接池已清理")
     except ImportError:
         pass
 
-    print("👋 MCP Server 关闭")
+    logger.info("MCP Server 关闭")
 
 
 # ============================================================================
@@ -338,17 +349,21 @@ def start_server():
     - MCP_HOST: 主机地址（默认 0.0.0.0）
     """
     port = int(os.getenv("MCP_PORT", "8000"))
-    host = os.getenv("MCP_HOST", "127.0.0.1")
+    host = os.getenv("MCP_HOST", "0.0.0.0")
 
-    print("=" * 50)
-    print("DB Analysis MCP Server (v2.1)")
-    print("=" * 50)
-    print(f"🌐 地址: http://{host}:{port}")
-    print(f"📡 SSE 端点: http://{host}:{port}/sse")
-    print(f"📡 HTTP 端点: http://{host}:{port}/mcp")
-    print(f"❤️  健康检查: http://{host}:{port}/health")
-    print(f"🔧 支持动态数据库连接")
-    print("=" * 50)
+    # 同时输出到控制台和日志文件
+    startup_msg = f"""
+{'=' * 50}
+DB Analysis MCP Server (v2.1)
+{'=' * 50}
+地址: http://{host}:{port}
+SSE 端点: http://{host}:{port}/sse
+HTTP 端点: http://{host}:{port}/mcp
+健康检查: http://{host}:{port}/health
+支持动态数据库连接
+{'=' * 50}"""
+    print(startup_msg)  # 控制台显示
+    logger.info(f"服务器启动 - 地址: http://{host}:{port}")
 
     uvicorn.run(
         app,
