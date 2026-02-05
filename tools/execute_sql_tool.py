@@ -196,12 +196,22 @@ def execute_sql_query(
     engine = None
     try:
         logger.debug(f"获取数据库引擎: {host}:{port}/{database}")
+
+        # 从环境变量读取连接池配置
+        import os
+        pool_size = int(os.getenv("DB_POOL_SIZE", "5"))
+        max_overflow = int(os.getenv("DB_MAX_OVERFLOW", "10"))
+        pool_timeout = int(os.getenv("DB_POOL_TIMEOUT", "30"))
+
         engine = get_engine(
             host=host,
             port=port,
             username=username,
             password=password,
-            database=database
+            database=database,
+            pool_size=pool_size,
+            max_overflow=max_overflow,
+            pool_timeout=pool_timeout
         )
 
         # ========== 5. 执行查询 ==========

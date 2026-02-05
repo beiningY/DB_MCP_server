@@ -146,13 +146,22 @@ def get_table_schema(
 
     # ========== 2. 获取数据库连接（使用连接池） ==========
     try:
+        # 从环境变量读取连接池配置
+        import os
+        pool_size = int(os.getenv("DB_POOL_SIZE", "5"))
+        max_overflow = int(os.getenv("DB_MAX_OVERFLOW", "10"))
+        pool_timeout = int(os.getenv("DB_POOL_TIMEOUT", "30"))
+
         # 连接到 information_schema 查询元数据
         engine = get_engine(
             host=host,
             port=port,
             username=username,
             password=password,
-            database="information_schema"
+            database="information_schema",
+            pool_size=pool_size,
+            max_overflow=max_overflow,
+            pool_timeout=pool_timeout
         )
 
         with engine.connect() as conn:

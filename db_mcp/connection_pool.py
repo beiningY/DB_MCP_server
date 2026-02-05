@@ -28,6 +28,11 @@ from sqlalchemy.pool import QueuePool
 from sqlalchemy.exc import SQLAlchemyError
 import threading
 import logging
+import os
+from dotenv import load_dotenv
+
+# 加载环境变量
+load_dotenv()
 
 logger = logging.getLogger(__name__)
 
@@ -42,13 +47,25 @@ _pools: Dict[str, Engine] = {}
 _pools_lock = threading.Lock()
 
 # ============================================================================
-# 默认配置
+# 默认配置（从环境变量读取）
 # ============================================================================
 
-DEFAULT_POOL_SIZE = 5          # 连接池大小
-DEFAULT_MAX_OVERFLOW = 10      # 最大溢出连接数
-DEFAULT_POOL_TIMEOUT = 30      # 获取连接超时时间（秒）
-DEFAULT_POOL_RECYCLE = 3600    # 连接回收时间（秒）
+def _get_int_env(key: str, default: int) -> int:
+    """从环境变量读取整数配置"""
+    try:
+        value = os.getenv(key, str(default))
+        return int(value)
+    except (ValueError, TypeError):
+        return default
+
+DEFAULT_POOL_SIZE = _get_int_env("DB_POOL_SIZE", 5)          # 连接池大小
+DEFAULT_MAX_OVERFLOW = _get_int_env("DB_MAX_OVERFLOW", 10)   # 最大溢出连接数
+DEFAULT_POOL_TIMEOUT = _get_int_env("DB_POOL_TIMEOUT", 30)   # 获取连接超时时间（秒）
+DEFAULT_POOL_RECYCLE = _get_int_env("DB_POOL_RECYCLE", 3600) # 连接回收时间（秒）
+
+# 日志输出连接池配置
+logger.info(f"连接池配置: pool_size={DEFAULT_POOL_SIZE}, max_overflow={DEFAULT_MAX_OVERFLOW}, "
+            f"max_concurrent={DEFAULT_POOL_SIZE + DEFAULT_MAX_OVERFLOW}")
 
 
 # ============================================================================
