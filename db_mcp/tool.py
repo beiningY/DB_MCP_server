@@ -16,7 +16,13 @@ MCP Tools - 数据分析工具定义
 
 import os
 import json
+import asyncio
 from typing import Optional, Dict, Any
+from concurrent.futures import ThreadPoolExecutor
+from functools import partial
+
+# 创建线程池用于执行同步的 Agent 调用
+_agent_executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="agent_")
 
 
 # ============================================================================
@@ -37,34 +43,28 @@ def get_current_db_config_from_server() -> Dict[str, Any]:
         return {}
 
 
-def get_current_session_id_from_server() -> str:
+def get_current_db_key_from_server() -> str:
     """
-    从 server 模块获取当前请求的 session_id
+    从 server 模块获取当前请求的数据库标识符
 
     Returns:
-        session_id 字符串
+        数据库标识符字符串
     """
     try:
-        from .server import get_current_session_id
-        return get_current_session_id()
+        from .server import get_current_db_key
+        return get_current_db_key()
     except ImportError:
         return "default"
 
 
-def get_default_db_config(session_id: str = None) -> Dict[str, Any]:
+def get_default_db_config() -> Dict[str, Any]:
     """
-    获取当前数据库配置（从 URL 参数）
-
-    Args:
-        session_id: session 标识符（可选）
+    获取当前数据库配置（从服务端映射）
 
     Returns:
         数据库配置字典
     """
-    url_config = get_current_db_config_from_server()
-    if url_config:
-        return url_config
-    return {}
+    return get_current_db_config_from_server()
 
 
 # ============================================================================
@@ -123,8 +123,8 @@ def register_tools(mcp):
             >>> data_agent("还款率是怎么计算的")
 
         注意：
-            使用前需要在 URL 中配置数据库连接参数，例如：
-            http://localhost:8000/sse?host=localhost&port=3306&username=root&password=&database=mydb
+            使用前需要在 URL 中指定数据库标识符，例如：
+            http://localhost:8000/sse?db=prod
         """
         if not query:
             return "错误：查询内容不能为空"
@@ -132,28 +132,33 @@ def register_tools(mcp):
         # 检查数据库配置
         config = get_default_db_config()
         if not config.get("host"):
-            return """错误：未配置数据库连接
+            db_key = get_current_db_key_from_server()
+            return f"""错误：未配置数据库连接
 
-请在客户端配置文件的 URL 中添加数据库参数：
-?host=数据库地址&port=端口&username=用户名&password=密码&database=数据库名
+请在 URL 中指定数据库标识符：
+?db=<database_name>
 
-示例：
-"url": "http://localhost:8000/sse?host=localhost&port=3306&username=root&password=&database=mydb"
+可用的数据库标识符请联系服务器管理员获取。
 
-或者使用预定义配置：
-"url": "http://localhost:8000/sse?session=prod"
+当前数据库标识符: {db_key}
 """
+        # 获取当前数据库标识符用于日志
+        db_key = get_current_db_key_from_server()
 
-        # 调用 Agent
+        # 在线程池中异步执行 Agent 调用，避免阻塞事件循环
+        loop = asyncio.get_event_loop()
+
         try:
             from agent.data_simple_agent import get_agent
 
-            agent = get_agent()
-            result = agent.invoke({
-                "messages": [
-                    {
-                        "role": "system",
-                        "content": f"""你是一个数据分析智能体。当前数据库配置：
+            def run_agent():
+                """在线程中运行 Agent"""
+                agent = get_agent()
+                return agent.invoke({
+                    "messages": [
+                        {
+                            "role": "system",
+                            "content": f"""你是一个数据分析智能体。当前数据库配置（标识符: {db_key}）：
 - 主机: {config['host']}
 - 端口: {config['port']}
 - 用户: {config['username']}
@@ -171,13 +176,16 @@ def register_tools(mcp):
 - password: {config['password']}
 - database: {config['database']}
 """
-                    },
-                    {
-                        "role": "user",
-                        "content": query
-                    }
-                ]
-            })
+                        },
+                        {
+                            "role": "user",
+                            "content": query
+                        }
+                    ]
+                })
+
+            # 在线程池中执行，避免阻塞事件循环
+            result = await loop.run_in_executor(_agent_executor, run_agent)
 
             # 提取最终回复
             if isinstance(result, dict) and "messages" in result:

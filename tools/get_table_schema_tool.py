@@ -1,7 +1,7 @@
 """
 数据库表结构查询工具
 从 MySQL information_schema 实时获取表的字段、类型、注释等元数据信息
-集成连接池和统一错误处理
+集成异步连接池和统一错误处理
 """
 
 from typing import Optional
@@ -9,7 +9,7 @@ from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 from langchain_core.tools import tool
 
-# 导入连接池和错误处理模块
+# 导入异步连接池和错误处理模块
 from db_mcp.connection_pool import get_engine
 from db_mcp.errors import (
     format_error_response,
@@ -87,7 +87,7 @@ def format_table_info(
 
 
 @tool
-def get_table_schema(
+async def get_table_schema(
     table_name: Optional[str] = None,
     host: str = "localhost",
     port: int = 3306,
@@ -103,7 +103,7 @@ def get_table_schema(
     - 支持模糊匹配表名
     - 显示字段详细信息（类型、主键、非空、注释）
     - 支持查询所有表摘要
-    - 使用连接池提高性能
+    - 使用异步连接池提高性能
     - 完整的错误处理和日志记录
 
     Args:
@@ -123,8 +123,8 @@ def get_table_schema(
         - 主键、非空等标记
 
     Examples:
-        >>> get_table_schema.invoke({"host": "localhost", "database": "mydb"})  # 获取所有表
-        >>> get_table_schema.invoke({"table_name": "users", "host": "localhost", "database": "mydb"})  # 获取指定表
+        >>> await get_table_schema.invoke({"host": "localhost", "database": "mydb"})  # 获取所有表
+        >>> await get_table_schema.invoke({"table_name": "users", "host": "localhost", "database": "mydb"})  # 获取指定表
     """
     # ========== 1. 基本参数验证 ==========
     if not host:
@@ -144,33 +144,24 @@ def get_table_schema(
         }
     )
 
-    # ========== 2. 获取数据库连接（使用连接池） ==========
+    # ========== 2. 获取数据库连接（使用异步连接池） ==========
     try:
-        # 从环境变量读取连接池配置
-        import os
-        pool_size = int(os.getenv("DB_POOL_SIZE", "5"))
-        max_overflow = int(os.getenv("DB_MAX_OVERFLOW", "10"))
-        pool_timeout = int(os.getenv("DB_POOL_TIMEOUT", "30"))
-
         # 连接到 information_schema 查询元数据
-        engine = get_engine(
+        engine = await get_engine(
             host=host,
             port=port,
             username=username,
             password=password,
-            database="information_schema",
-            pool_size=pool_size,
-            max_overflow=max_overflow,
-            pool_timeout=pool_timeout
+            database="information_schema"
         )
 
-        with engine.connect() as conn:
+        async with engine.connect() as conn:
             # ========== 3. 如果未指定表名，返回所有表的摘要 ==========
             if not table_name:
-                return _get_all_tables_summary(conn, database)
+                return await _get_all_tables_summary(conn, database)
 
             # ========== 4. 查询指定表的详细结构 ==========
-            return _get_table_detail(conn, table_name, database)
+            return await _get_table_detail(conn, table_name, database)
 
     except SQLAlchemyError as e:
         error_msg = str(e)
@@ -217,7 +208,7 @@ def get_table_schema(
         )
 
 
-def _get_all_tables_summary(conn, database: str) -> str:
+async def _get_all_tables_summary(conn, database: str) -> str:
     """
     获取数据库中所有表的摘要
 
@@ -240,7 +231,7 @@ def _get_all_tables_summary(conn, database: str) -> str:
         ORDER BY TABLE_NAME
     """)
 
-    result = conn.execute(tables_sql, {"database": database})
+    result = await conn.execute(tables_sql, {"database": database})
     tables = result.fetchall()
 
     logger.info(f"查询到 {len(tables)} 个表", extra={"database": database})
@@ -271,7 +262,7 @@ def _get_all_tables_summary(conn, database: str) -> str:
     return "\n".join(lines)
 
 
-def _get_table_detail(conn, table_name: str, database: str) -> str:
+async def _get_table_detail(conn, table_name: str, database: str) -> str:
     """
     获取指定表的详细信息
 
@@ -293,7 +284,7 @@ def _get_table_detail(conn, table_name: str, database: str) -> str:
         AND LOWER(TABLE_NAME) = :table_name
     """)
 
-    result = conn.execute(check_sql, {"database": database, "table_name": table_name_lower})
+    result = await conn.execute(check_sql, {"database": database, "table_name": table_name_lower})
     table_info = result.fetchone()
 
     if not table_info:
@@ -311,7 +302,7 @@ def _get_table_detail(conn, table_name: str, database: str) -> str:
             ORDER BY TABLE_NAME
             LIMIT 10
         """)
-        result = conn.execute(similar_sql, {"database": database, "pattern": f"%{table_name_lower}%"})
+        result = await conn.execute(similar_sql, {"database": database, "pattern": f"%{table_name_lower}%"})
         similar_tables = [row[0] for row in result.fetchall()]
 
         msg = f"表 '{table_name}' 在数据库 '{database}' 中不存在\n"
@@ -341,7 +332,7 @@ def _get_table_detail(conn, table_name: str, database: str) -> str:
         ORDER BY ORDINAL_POSITION
     """)
 
-    result = conn.execute(columns_sql, {"database": database, "table_name": actual_table_name})
+    result = await conn.execute(columns_sql, {"database": database, "table_name": actual_table_name})
     columns = []
     for row in result.fetchall():
         columns.append({
@@ -367,7 +358,7 @@ def _get_table_detail(conn, table_name: str, database: str) -> str:
         ORDER BY INDEX_NAME, SEQ_IN_INDEX
     """)
 
-    result = conn.execute(indexes_sql, {"database": database, "table_name": actual_table_name})
+    result = await conn.execute(indexes_sql, {"database": database, "table_name": actual_table_name})
     indexes = []
     for row in result.fetchall():
         indexes.append({

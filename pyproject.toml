@@ -17,6 +17,7 @@ dependencies = [
     "pydantic>=2.0.0",
     "sqlalchemy>=2.0.45",
     "pymysql>=1.1.2",
+    "asyncmy>=0.2.9",  # SQLAlchemy Async 推荐的异步 MySQL 驱动
     "pandas>=2.0.0",
     # LLM 和 Agent
     "openai>=2.14.0",

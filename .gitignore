@@ -52,3 +52,5 @@ data.tar.gz
 ._docker-compose.yml
 
 data_pipeline/*
+
+.claude/

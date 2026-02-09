@@ -18,7 +18,7 @@ from db_mcp.sql_validator import (
     SQLValidationError,
     sanitize_limit
 )
-from db_mcp.connection_pool import get_engine
+from db_mcp.connection_pool import execute_query
 from db_mcp.errors import (
     format_error_response,
     format_success_response,
@@ -64,31 +64,8 @@ def _convert_value(value: Any) -> Any:
     return value
 
 
-def _process_query_result(result) -> tuple[list, list]:
-    """
-    处理查询结果，转换为字典列表
-
-    Args:
-        result: SQLAlchemy 查询结果对象
-
-    Returns:
-        (data, columns) 元组
-    """
-    columns = list(result.keys())
-    rows = result.fetchall()
-
-    data = []
-    for row in rows:
-        row_dict = {}
-        for key, value in zip(columns, row):
-            row_dict[key] = _convert_value(value)
-        data.append(row_dict)
-
-    return data, columns
-
-
 @tool
-def execute_sql_query(
+async def execute_sql_query(
     sql: str,
     host: str,
     port: int = 3306,
@@ -103,7 +80,7 @@ def execute_sql_query(
     功能特性：
     - 仅允许 SELECT 查询（通过 SQL 解析器严格验证）
     - 自动添加 LIMIT 保护（默认最多 100 行）
-    - 使用连接池提高性能
+    - 使用异步连接池提高性能
     - 完整的错误处理和日志记录
     - 自动转换数据类型（Decimal、datetime 等）
 
@@ -126,8 +103,8 @@ def execute_sql_query(
         - message: 提示信息或错误信息
 
     Examples:
-        >>> execute_sql_query("SELECT * FROM users WHERE id = 1", host="localhost", database="mydb")
-        >>> execute_sql_query("SELECT COUNT(*) as cnt FROM orders", host="192.168.1.100", username="admin", password="pass123", database="shop", limit=1)
+        >>> await execute_sql_query("SELECT * FROM users WHERE id = 1", host="localhost", database="mydb")
+        >>> await execute_sql_query("SELECT COUNT(*) as cnt FROM orders", host="192.168.1.100", username="admin", password="pass123", database="shop", limit=1)
     """
     # ========== 1. 基本参数验证 ==========
     sql = sql.strip() if sql else ""
@@ -192,65 +169,42 @@ def execute_sql_query(
     if "LIMIT" not in sql_upper:
         sql = f"{sql.rstrip(';')} LIMIT {limit}"
 
-    # ========== 4. 获取数据库连接（使用连接池） ==========
-    engine = None
+    # ========== 4. 执行查询（使用异步连接池） ==========
     try:
-        logger.debug(f"获取数据库引擎: {host}:{port}/{database}")
+        logger.debug(f"执行异步查询: {host}:{port}/{database}")
 
-        # 从环境变量读取连接池配置
-        import os
-        pool_size = int(os.getenv("DB_POOL_SIZE", "5"))
-        max_overflow = int(os.getenv("DB_MAX_OVERFLOW", "10"))
-        pool_timeout = int(os.getenv("DB_POOL_TIMEOUT", "30"))
+        start_time = time.time()
 
-        engine = get_engine(
+        # 使用异步连接池执行查询
+        data, columns = await execute_query(
             host=host,
             port=port,
             username=username,
             password=password,
             database=database,
-            pool_size=pool_size,
-            max_overflow=max_overflow,
-            pool_timeout=pool_timeout
+            sql=sql
         )
 
-        # ========== 5. 执行查询 ==========
-        start_time = time.time()
+        execution_time = (time.time() - start_time) * 1000  # 转为毫秒
 
-        with engine.connect() as conn:
-            # 设置查询超时（30秒）
-            try:
-                conn.execute(text("SET SESSION MAX_EXECUTION_TIME=30000"))
-            except Exception:
-                # 某些 MySQL 版本可能不支持此设置
-                logger.debug("无法设置 MAX_EXECUTION_TIME（可能是 MySQL 版本问题）")
+        # 记录成功日志
+        logger.info(
+            f"查询成功",
+            extra={
+                "host": host,
+                "database": database,
+                "row_count": len(data),
+                "execution_time_ms": round(execution_time, 2)
+            }
+        )
 
-            # 执行 SQL
-            result = conn.execute(text(sql))
-
-            # 处理结果
-            data, columns = _process_query_result(result)
-
-            execution_time = (time.time() - start_time) * 1000  # 转为毫秒
-
-            # 记录成功日志
-            logger.info(
-                f"查询成功",
-                extra={
-                    "host": host,
-                    "database": database,
-                    "row_count": len(data),
-                    "execution_time_ms": round(execution_time, 2)
-                }
-            )
-
-            # 返回成功响应
-            return format_success_response(
-                data=data,
-                columns=columns,
-                message=f"查询成功，返回 {len(data)} 行数据",
-                execution_time=round(execution_time, 2)
-            )
+        # 返回成功响应
+        return format_success_response(
+            data=data,
+            columns=columns,
+            message=f"查询成功，返回 {len(data)} 行数据",
+            execution_time=round(execution_time, 2)
+        )
 
     except SQLAlchemyError as e:
         # 数据库相关错误
@@ -306,7 +260,7 @@ def execute_sql_query(
 
 # ============ 便捷函数 ============
 
-def execute_sql_safe(
+async def execute_sql_safe(
     sql: str,
     host: str,
     port: int = 3306,
@@ -330,7 +284,7 @@ def execute_sql_safe(
     Returns:
         字典格式的查询结果
     """
-    result = execute_sql_query(
+    result = await execute_sql_query(
         sql=sql,
         host=host,
         port=port,
