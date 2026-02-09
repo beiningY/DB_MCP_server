@@ -16,13 +16,7 @@ MCP Tools - 数据分析工具定义
 
 import os
 import json
-import asyncio
 from typing import Optional, Dict, Any
-from concurrent.futures import ThreadPoolExecutor
-from functools import partial
-
-# 创建线程池用于执行同步的 Agent 调用
-_agent_executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="agent_")
 
 
 # ============================================================================
@@ -145,20 +139,16 @@ def register_tools(mcp):
         # 获取当前数据库标识符用于日志
         db_key = get_current_db_key_from_server()
 
-        # 在线程池中异步执行 Agent 调用，避免阻塞事件循环
-        loop = asyncio.get_event_loop()
-
         try:
             from agent.data_simple_agent import get_agent
 
-            def run_agent():
-                """在线程中运行 Agent"""
-                agent = get_agent()
-                return agent.invoke({
-                    "messages": [
-                        {
-                            "role": "system",
-                            "content": f"""你是一个数据分析智能体。当前数据库配置（标识符: {db_key}）：
+            agent = get_agent()
+            # 使用 ainvoke 异步调用 Agent（工具是 async 的，必须用 ainvoke）
+            result = await agent.ainvoke({
+                "messages": [
+                    {
+                        "role": "system",
+                        "content": f"""你是一个数据分析智能体。当前数据库配置（标识符: {db_key}）：
 - 主机: {config['host']}
 - 端口: {config['port']}
 - 用户: {config['username']}
@@ -176,16 +166,13 @@ def register_tools(mcp):
 - password: {config['password']}
 - database: {config['database']}
 """
-                        },
-                        {
-                            "role": "user",
-                            "content": query
-                        }
-                    ]
-                })
-
-            # 在线程池中执行，避免阻塞事件循环
-            result = await loop.run_in_executor(_agent_executor, run_agent)
+                    },
+                    {
+                        "role": "user",
+                        "content": query
+                    }
+                ]
+            })
 
             # 提取最终回复
             if isinstance(result, dict) and "messages" in result:

@@ -17,7 +17,7 @@ Agent 工作流程：
     from agent.data_simple_agent import get_agent
 
     agent = get_agent()
-    result = agent.invoke({
+    result = agent.ainvoke({
         "messages": [
             {
                 "role": "system",
@@ -44,7 +44,7 @@ load_dotenv()
 
 SYSTEM_PROMPT = """你是一个专业的数据分析智能体。
 
-## ���用工具
+## 调用工具
 1. **execute_sql_query** - 执行 SQL 查询（仅支持 SELECT）
 2. **get_table_schema** - 获取数据库表结构
 3. **search_knowledge_graph** - 搜索知识图谱（业务逻辑、历史 SQL）
@@ -90,7 +90,7 @@ def get_agent():
 
     Examples:
         >>> agent = get_agent()
-        >>> result = agent.invoke({"messages": [...]})
+        >>> result = agent.ainvoke({"messages": [...]})
     """
     global _agent
     if _agent is None:
@@ -134,7 +134,7 @@ if __name__ == "__main__":
         - LLM_BASE_URL（可选）
     """
     agent = get_agent()
-    result = agent.invoke(
+    result = agent.ainvoke(
         {"messages": [
             {
                 "role": "system",
