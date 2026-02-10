@@ -1,10 +1,18 @@
 """
 数据分析师 Agent
 基于 Plan-Execute-Replan 模式，集成知识模块和 SQL 执行器
+
+改进点：
+- step_index 防止重复执行同一步骤
+- iteration_count 超限自动生成兜底回答
+- 每个节点 try-except 错误处理
+- threading.Lock 线程安全延迟初始化
+- should_end 增加计划完成自动终止逻辑
 """
 
 import os
 import operator
+import threading
 from typing import Annotated, List, Tuple, Union
 from typing_extensions import TypedDict
 from dotenv import load_dotenv
@@ -21,13 +29,20 @@ load_dotenv()
 from tools import execute_sql_query, search_knowledge_graph, get_table_schema
 
 
+# ============= 常量 =============
+MAX_ITERATIONS = 15  # 最大迭代次数，超过后自动生成兜底回答
+
+
 # ============= 状态定义 =============
 class PlanExecute(TypedDict):
     """Agent 状态"""
-    input: str
-    plan: List[str]
-    past_steps: Annotated[List[Tuple], operator.add]
-    response: str
+    input: str                                            # 用户输入
+    plan: List[str]                                       # 当前计划步骤列表
+    step_index: int                                       # 当前执行到第几步（从 0 开始）
+    past_steps: Annotated[List[Tuple], operator.add]      # 已完成步骤（累加）
+    response: str                                         # 最终响应
+    iteration_count: int                                  # 已执行迭代次数
+    error_log: Annotated[List[str], operator.add]         # 错误日志（累加）
 
 
 # ============= Schema 定义 =============
@@ -52,16 +67,11 @@ class Act(BaseModel):
 
 # ============= 初始化 LLM =============
 def get_llm():
-    """获取 LLM 实例"""
-    llm_model = os.getenv("LLM_MODEL", "gpt-4")
-    llm_base_url = os.getenv("LLM_BASE_URL")
-    llm_api_key = os.getenv("LLM_API_KEY")
-    
-    
+    """获取 LLM 实例（每次调用创建新实例，本身是线程安全的）"""
     return ChatOpenAI(
-        model=llm_model,
-        base_url=llm_base_url,
-        api_key=llm_api_key,
+        model=os.getenv("LLM_MODEL", "gpt-4"),
+        base_url=os.getenv("LLM_BASE_URL"),
+        api_key=os.getenv("LLM_API_KEY"),
     )
 
 
@@ -84,7 +94,7 @@ planner_prompt = ChatPromptTemplate.from_messages([
 
 ## 规划原则
 1. 在生成 SQL 前，**务必**先使用 get_table_schema 确认表名和字段
-2. 对于复杂业务逻辑，使用 search_knowledge_graph 参考历史查询
+2. 对于复杂业务逻辑，可以使用 search_knowledge_graph 参考历史查询作为参考
 3. 复杂查询应该分步骤验证
 4. 每个步骤应该清晰、具体、可执行
 
@@ -107,113 +117,274 @@ planner_prompt = ChatPromptTemplate.from_messages([
     ("placeholder", "{messages}"),
 ])
 
+
 # ============= Replanner =============
-replanner_prompt = ChatPromptTemplate.from_template("""你是一个数据分析任务重规划师。
+# 更新 prompt：增加进度信息和错误日志，引导 replanner 在步骤完成后返回 Response
+replanner_prompt = ChatPromptTemplate.from_template(
+    """你是一个数据分析任务重规划师。
 根据已完成的步骤和当前状态，决定接下来的行动。
 
 原始目标: {input}
 原始计划: {plan}
-已完成步骤: {past_steps}
+执行进度: 已执行 {step_index}/{total_steps} 步
+已完成步骤及结果: {past_steps}
+错误记录: {error_log}
 
 ## 决策原则
 - 如果已经获得足够信息可以回答用户问题，返回 Response
-- 如果任务未完成或需要修正，返回更新后的 Plan
-- 如果 SQL 执行失败，分析错误并修正
+- **如果所有计划步骤已执行完毕，必须根据执行结果返回 Response 进行总结回答**
+- 如果任务未完成或需要修正，返回更新后的 Plan（只包含尚未完成的步骤）
+- 如果 SQL 执行失败，分析错误原因并修正计划
+- 如果出现多次错误，可以考虑换一种方式实现
 
 ## 输出格式
 请以 JSON 格式返回，二选一：
 - 结束任务：{{"action": {{"response": "最终回答内容"}}}}
 - 继续执行：{{"action": {{"steps": ["步骤1", "步骤2", ...]}}}}
-""")
+"""
+)
 
 
-# ============= 延迟初始化（避免模块加载时调用 LLM） =============
+# ============= 线程安全的延迟初始化 =============
+_init_lock = threading.Lock()
 _planner = None
 _replanner = None
 _agent_executor = None
 
 
 def get_planner():
-    """延迟获取 Planner"""
+    """线程安全的延迟获取 Planner（双重检查锁定）"""
     global _planner
     if _planner is None:
-        # 使用 json_mode 避免某些模型返回尾部字符的问题
-        _planner = planner_prompt | get_llm().with_structured_output(
-            Plan, 
-            method="json_mode"
-        )
+        with _init_lock:
+            if _planner is None:
+                _planner = planner_prompt | get_llm().with_structured_output(
+                    Plan,
+                    method="json_mode"
+                )
     return _planner
 
 
 def get_replanner():
-    """延迟获取 Replanner"""
+    """线程安全的延迟获取 Replanner（双重检查锁定）"""
     global _replanner
     if _replanner is None:
-        _replanner = replanner_prompt | get_llm().with_structured_output(
-            Act,
-            method="json_mode"
-        )
+        with _init_lock:
+            if _replanner is None:
+                _replanner = replanner_prompt | get_llm().with_structured_output(
+                    Act,
+                    method="json_mode"
+                )
     return _replanner
 
 
+# ============= Executor Agent System Prompt =============
+EXECUTOR_SYSTEM_PROMPT = """你是一个精确的任务执行器，负责执行数据分析计划中的单个步骤。
+
+## 核心原则
+- 你只负责**执行当前分配的任务**，不要自行扩展或规划额外步骤
+- 严格使用工具完成任务，不要凭空捏造数据
+- 如果工具调用失败，如实报告错误信息，不要自行修正或重试
+
+## 可用工具
+1. **get_table_schema** - 获取数据库表结构
+   - 不带 table_name 参数：返回数据库所有表列表
+   - 指定 table_name：返回该表的详细字段信息（字段名、类型、注释等）
+
+2. **search_knowledge_graph** - 搜索知识图谱
+   - 用于查找历史 SQL 查询、业务规则、字段含义等
+   - 输入自然语言描述即可
+
+3. **execute_sql_query** - 执行 SQL 查询
+   - 仅支持 SELECT 语句
+   - 自动添加 LIMIT 保护
+
+## 执行要求
+- 调用 execute_sql_query 和 get_table_schema 时，必须使用消息中提供的数据库连接参数
+- search_knowledge_graph 不需要数据库连接参数
+- 执行完成后，**清晰地汇报结果**，包括关键数据和发现
+- 如果任务要求执行 SQL，请在结果中包含实际执行的 SQL 语句
+"""
+
+
 def get_agent_executor():
-    """延迟获取 Agent Executor"""
+    """线程安全的延迟获取 Agent Executor（双重检查锁定）"""
     global _agent_executor
     if _agent_executor is None:
-        _agent_executor = create_agent(
-            model=os.getenv("LLM_MODEL"),
-            api_key=os.getenv("LLM_API_KEY"),
-            base_url=os.getenv("LLM_BASE_URL"),
-            tools=[execute_sql_query, search_knowledge_graph, get_table_schema]
-        )
+        with _init_lock:
+            if _agent_executor is None:
+                model = ChatOpenAI(
+                    model=os.getenv("LLM_MODEL", "gpt-4"),
+                    api_key=os.getenv("LLM_API_KEY"),
+                    base_url=os.getenv("LLM_BASE_URL"),
+                )
+                _agent_executor = create_agent(
+                    model=model,
+                    tools=[execute_sql_query, search_knowledge_graph, get_table_schema],
+                    system_prompt=EXECUTOR_SYSTEM_PROMPT
+                )
     return _agent_executor
+
+
+# ============= 辅助函数 =============
+def _generate_fallback_response(state: PlanExecute, reason: str = "") -> str:
+    """根据已执行步骤生成兜底回答"""
+    past_steps = state.get("past_steps", [])
+    errors = state.get("error_log", [])
+
+    parts = [f"⚠️ {reason}" if reason else "⚠️ 任务未能正常完成"]
+
+    if past_steps:
+        parts.append("\n## 已执行步骤及结果：")
+        for i, (step, result) in enumerate(past_steps, 1):
+            parts.append(f"\n### 步骤 {i}: {step}")
+            parts.append(str(result))
+
+    if errors:
+        parts.append("\n## 执行过程中的错误：")
+        for err in errors:
+            parts.append(f"- {err}")
+
+    return "\n".join(parts)
 
 
 # ============= Workflow 节点 =============
 async def plan_step(state: PlanExecute):
-    """规划步骤"""
-    plan = await get_planner().ainvoke({"messages": [("user", state["input"])]})
-    return {"plan": plan.steps}
+    """规划步骤（带错误处理）"""
+    try:
+        plan = await get_planner().ainvoke(
+            {"messages": [("user", state["input"])]}
+        )
+        return {
+            "plan": plan.steps,
+            "step_index": 0,          # 初始化步骤索引
+            "iteration_count": 0,     # 初始化迭代计数
+        }
+    except Exception as e:
+        error_msg = f"[planner] {type(e).__name__}: {str(e)}"
+        return {
+            "plan": [],
+            "step_index": 0,
+            "iteration_count": 0,
+            "response": f"规划阶段出错，无法生成执行计划: {str(e)}",
+            "error_log": [error_msg],
+        }
 
 
 async def execute_step(state: PlanExecute):
-    """执行步骤"""
-    plan = state["plan"]
+    """执行当前步骤（基于 step_index，带错误处理）"""
+    plan = state.get("plan", [])
+    step_index = state.get("step_index", 0)
+    iteration_count = state.get("iteration_count", 0)
+
+    # 安全检查：step_index 越界（不应该到这里，should_continue_after_plan 会拦截）
+    if step_index >= len(plan):
+        return {
+            "past_steps": [("(无更多步骤)", "所有计划步骤已执行完毕")],
+            "step_index": step_index,
+            "iteration_count": iteration_count + 1,
+        }
+
+    task = plan[step_index]
     plan_str = "\n".join(f"{i+1}. {step}" for i, step in enumerate(plan))
-    task = plan[0]
-    
-    task_formatted = f"""根据以下计划执行第一步:
+
+    task_formatted = f"""根据以下计划执行第 {step_index + 1} 步:
 {plan_str}
 
-当前任务: {task}
+当前任务（第 {step_index + 1}/{len(plan)} 步）: {task}
 
 请使用可用工具完成这个任务。"""
-    
-    agent_response = await get_agent_executor().ainvoke(
-        {"messages": [("user", task_formatted)]}
-    )
-    
-    return {
-        "past_steps": [(task, agent_response["messages"][-1].content)],
-    }
+
+    try:
+        agent_response = await get_agent_executor().ainvoke(
+            {"messages": [("user", task_formatted)]}
+        )
+        return {
+            "past_steps": [(task, agent_response["messages"][-1].content)],
+            "step_index": step_index + 1,          # 推进到下一步
+            "iteration_count": iteration_count + 1,
+        }
+    except Exception as e:
+        error_msg = f"[executor] step {step_index} ({task}): {type(e).__name__}: {str(e)}"
+        return {
+            "past_steps": [(task, f"⚠️ 执行出错: {str(e)}")],
+            "step_index": step_index + 1,          # 跳过失败步骤，继续下一步
+            "iteration_count": iteration_count + 1,
+            "error_log": [error_msg],
+        }
 
 
 async def replan_step(state: PlanExecute):
-    """重新规划"""
-    output = await get_replanner().ainvoke(state)
-    
-    if isinstance(output.action, Response):
-        return {"response": output.action.response}
-    else:
-        return {"plan": output.action.steps}
+    """重新规划（带迭代限制和错误处理）"""
+    iteration_count = state.get("iteration_count", 0)
+    step_index = state.get("step_index", 0)
+    plan = state.get("plan", [])
+
+    # 迭代次数超限 → 生成兜底回答
+    if iteration_count >= MAX_ITERATIONS:
+        return {
+            "response": _generate_fallback_response(
+                state,
+                reason=f"已达到最大迭代次数({MAX_ITERATIONS})，基于已有信息自动生成回答"
+            )
+        }
+
+    try:
+        # 构造 replanner 输入，包含进度和错误信息
+        replan_input = {
+            "input": state.get("input", ""),
+            "plan": plan,
+            "step_index": step_index,
+            "total_steps": len(plan),
+            "past_steps": state.get("past_steps", []),
+            "error_log": state.get("error_log", []),
+        }
+        output = await get_replanner().ainvoke(replan_input)
+
+        if isinstance(output.action, Response):
+            return {"response": output.action.response}
+        else:
+            # 返回新计划 → 重置 step_index
+            return {"plan": output.action.steps, "step_index": 0}
+
+    except Exception as e:
+        error_msg = f"[replanner] {type(e).__name__}: {str(e)}"
+        # Replanner 失败 → 基于已有信息生成兜底回答
+        return {
+            "response": _generate_fallback_response(
+                state,
+                reason=f"重规划阶段出错({str(e)})，基于已有信息生成回答"
+            ),
+            "error_log": [error_msg],
+        }
+
+
+def should_continue_after_plan(state: PlanExecute):
+    """Planner 之后的条件判断：失败或空计划则直接结束"""
+    # planner 出错时已设置 response → 直接结束
+    if state.get("response"):
+        return END
+    # 计划为空 → 无法执行
+    if not state.get("plan"):
+        return END
+    return "agent"
 
 
 def should_end(state: PlanExecute):
-    """判断是否结束"""
-    if "response" in state and state["response"]:
+    """Replan 之后的条件判断"""
+    # 1. 已有最终回答 → 结束
+    if state.get("response"):
         return END
-    else:
-        return "agent"
+
+    # 2. 安全兜底：计划为空或所有步骤已执行完 → 结束
+    #    正常情况下 replanner 会生成 Response，这里是防御性检查
+    plan = state.get("plan", [])
+    step_index = state.get("step_index", 0)
+    if not plan or step_index >= len(plan):
+        return END
+
+    # 3. 继续执行下一步
+    return "agent"
 
 
 # ============= 构建 Workflow =============
@@ -226,7 +397,12 @@ workflow.add_node("replan", replan_step)
 
 # 添加边
 workflow.add_edge(START, "planner")
-workflow.add_edge("planner", "agent")
+# planner → 条件判断：成功则执行，失败则结束
+workflow.add_conditional_edges(
+    "planner",
+    should_continue_after_plan,
+    ["agent", END],
+)
 workflow.add_edge("agent", "replan")
 workflow.add_conditional_edges(
     "replan",
@@ -242,8 +418,13 @@ app = workflow.compile()
 async def main():
     """测试函数"""
     config = {"recursion_limit": 50}
-    inputs = {"input": "查询 singa_bi 数据库中有多少个表"}
-    
+    inputs = {
+        "input": "请告诉我摄像头的数据信息并介绍分析一下，"
+                 "数据库的配置是(MYSQL_DATABASE: cognitive,"
+                 "MYSQL_HOST: rm-0iwx9y9q368yc877wbo.mysql.japan.rds.aliyuncs.com,"
+                 "MYSQL_PASSWORD: Root155017,MYSQL_PORT: 3306,MYSQL_USER: root)"
+    }
+
     print("开始执行...")
     async for event in app.astream(inputs, config=config):
         for k, v in event.items():
