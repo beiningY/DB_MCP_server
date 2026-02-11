@@ -4,7 +4,7 @@
 
 改进点：
 - step_index 防止重复执行同一步骤
-- iteration_count 超限自动生成兜底回答
+- MAX_ITERATIONS 唯一限制，超限自动生成兜底回答（用 len(past_steps) 计数）
 - 每个节点 try-except 错误处理
 - threading.Lock 线程安全延迟初始化
 - should_end 增加计划完成自动终止逻辑
@@ -20,6 +20,7 @@ from pydantic import BaseModel, Field
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_openai import ChatOpenAI
 from langgraph.graph import StateGraph, START, END
+from langgraph.errors import GraphRecursionError
 from langchain.agents import create_agent
 
 
@@ -30,7 +31,9 @@ from tools import execute_sql_query, search_knowledge_graph, get_table_schema
 
 
 # ============= 常量 =============
-MAX_ITERATIONS = 15  # 最大迭代次数，超过后自动生成兜底回答
+# 唯一需要调整的限制：agent 最多执行多少轮（execute_step 调用次数）
+# LangGraph 的 recursion_limit 会根据此值自动推导，无需单独设置
+MAX_ITERATIONS = 15
 
 
 # ============= 状态定义 =============
@@ -39,9 +42,8 @@ class PlanExecute(TypedDict):
     input: str                                            # 用户输入
     plan: List[str]                                       # 当前计划步骤列表
     step_index: int                                       # 当前执行到第几步（从 0 开始）
-    past_steps: Annotated[List[Tuple], operator.add]      # 已完成步骤（累加）
+    past_steps: Annotated[List[Tuple], operator.add]      # 已完成步骤（累加），len() 即迭代次数
     response: str                                         # 最终响应
-    iteration_count: int                                  # 已执行迭代次数
     error_log: Annotated[List[str], operator.add]         # 错误日志（累加）
 
 
@@ -257,15 +259,13 @@ async def plan_step(state: PlanExecute):
         )
         return {
             "plan": plan.steps,
-            "step_index": 0,          # 初始化步骤索引
-            "iteration_count": 0,     # 初始化迭代计数
+            "step_index": 0,
         }
     except Exception as e:
         error_msg = f"[planner] {type(e).__name__}: {str(e)}"
         return {
             "plan": [],
             "step_index": 0,
-            "iteration_count": 0,
             "response": f"规划阶段出错，无法生成执行计划: {str(e)}",
             "error_log": [error_msg],
         }
@@ -275,14 +275,12 @@ async def execute_step(state: PlanExecute):
     """执行当前步骤（基于 step_index，带错误处理）"""
     plan = state.get("plan", [])
     step_index = state.get("step_index", 0)
-    iteration_count = state.get("iteration_count", 0)
 
-    # 安全检查：step_index 越界（不应该到这里，should_continue_after_plan 会拦截）
+    # 安全检查：step_index 越界
     if step_index >= len(plan):
         return {
             "past_steps": [("(无更多步骤)", "所有计划步骤已执行完毕")],
             "step_index": step_index,
-            "iteration_count": iteration_count + 1,
         }
 
     task = plan[step_index]
@@ -301,42 +299,39 @@ async def execute_step(state: PlanExecute):
         )
         return {
             "past_steps": [(task, agent_response["messages"][-1].content)],
-            "step_index": step_index + 1,          # 推进到下一步
-            "iteration_count": iteration_count + 1,
+            "step_index": step_index + 1,
         }
     except Exception as e:
         error_msg = f"[executor] step {step_index} ({task}): {type(e).__name__}: {str(e)}"
         return {
             "past_steps": [(task, f"⚠️ 执行出错: {str(e)}")],
-            "step_index": step_index + 1,          # 跳过失败步骤，继续下一步
-            "iteration_count": iteration_count + 1,
+            "step_index": step_index + 1,  # 跳过失败步骤
             "error_log": [error_msg],
         }
 
 
 async def replan_step(state: PlanExecute):
     """重新规划（带迭代限制和错误处理）"""
-    iteration_count = state.get("iteration_count", 0)
+    past_steps = state.get("past_steps", [])
     step_index = state.get("step_index", 0)
     plan = state.get("plan", [])
 
-    # 迭代次数超限 → 生成兜底回答
-    if iteration_count >= MAX_ITERATIONS:
+    # 用 len(past_steps) 作为迭代计数，超限 → 生成兜底回答
+    if len(past_steps) >= MAX_ITERATIONS:
         return {
             "response": _generate_fallback_response(
                 state,
-                reason=f"已达到最大迭代次数({MAX_ITERATIONS})，基于已有信息自动生成回答"
+                reason=f"已达到最大执行次数({MAX_ITERATIONS})，基于已有信息自动生成回答"
             )
         }
 
     try:
-        # 构造 replanner 输入，包含进度和错误信息
         replan_input = {
             "input": state.get("input", ""),
             "plan": plan,
             "step_index": step_index,
             "total_steps": len(plan),
-            "past_steps": state.get("past_steps", []),
+            "past_steps": past_steps,
             "error_log": state.get("error_log", []),
         }
         output = await get_replanner().ainvoke(replan_input)
@@ -344,12 +339,10 @@ async def replan_step(state: PlanExecute):
         if isinstance(output.action, Response):
             return {"response": output.action.response}
         else:
-            # 返回新计划 → 重置 step_index
             return {"plan": output.action.steps, "step_index": 0}
 
     except Exception as e:
         error_msg = f"[replanner] {type(e).__name__}: {str(e)}"
-        # Replanner 失败 → 基于已有信息生成兜底回答
         return {
             "response": _generate_fallback_response(
                 state,
@@ -414,23 +407,49 @@ workflow.add_conditional_edges(
 app = workflow.compile()
 
 
+# ============= 对外接口 =============
+async def run_agent(user_input: str) -> str:
+    """
+    运行 Agent 的统一入口。
+    
+    限制只有一个：MAX_ITERATIONS（最大执行轮数）。
+    LangGraph 的 recursion_limit 由它自动推导，作为框架级安全阀。
+    
+    Args:
+        user_input: 用户的自然语言输入
+    
+    Returns:
+        Agent 的最终回答字符串
+    """
+    # recursion_limit 由 MAX_ITERATIONS 自动推导，无需单独配置
+    # 公式：1(planner) + N × 2(agent + replan) + 余量
+    config = {"recursion_limit": MAX_ITERATIONS * 2 + 10}
+    inputs = {"input": user_input}
+
+    try:
+        final_state = await app.ainvoke(inputs, config=config)
+        return final_state.get("response", "未能生成回答，请重试。")
+
+    except GraphRecursionError:
+        # 框架级安全阀，正常不会触发（MAX_ITERATIONS 会先拦截）
+        return f"⚠️ 执行超过上限({MAX_ITERATIONS}轮)，已自动终止。请尝试简化问题后重新提问。"
+
+
 # ============= 主函数（用于测试） =============
 async def main():
     """测试函数"""
-    config = {"recursion_limit": 50}
-    inputs = {
-        "input": "请告诉我摄像头的数据信息并介绍分析一下，"
-                 "数据库的配置是(MYSQL_DATABASE: cognitive,"
-                 "MYSQL_HOST: rm-0iwx9y9q368yc877wbo.mysql.japan.rds.aliyuncs.com,"
-                 "MYSQL_PASSWORD: Root155017,MYSQL_PORT: 3306,MYSQL_USER: root)"
-    }
+    user_input = (
+        "请告诉我摄像头的数据信息并介绍分析一下，"
+        "数据库的配置是(MYSQL_DATABASE: cognitive,"
+        "MYSQL_HOST: rm-0iwx9y9q368yc877wbo.mysql.japan.rds.aliyuncs.com,"
+        "MYSQL_PASSWORD: Root155017,MYSQL_PORT: 3306,MYSQL_USER: root)"
+    )
 
-    print("开始执行...")
-    async for event in app.astream(inputs, config=config):
-        for k, v in event.items():
-            if k != "__end__":
-                print(f"\n=== {k} ===")
-                print(v)
+    print(f"配置: MAX_ITERATIONS={MAX_ITERATIONS}")
+    print("开始执行...\n")
+
+    result = await run_agent(user_input)
+    print(f"\n=== 最终结果 ===\n{result}")
 
 
 if __name__ == "__main__":
