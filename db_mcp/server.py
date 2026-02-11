@@ -6,6 +6,7 @@ DB Analysis MCP Server (SSE)
 """
 
 import os
+import contextvars
 from contextlib import asynccontextmanager
 from typing import Dict, Any
 from urllib.parse import parse_qs
@@ -39,9 +40,14 @@ logger = get_logger("mcp.server")
 _db_mapping: Dict[str, Dict[str, Any]] = {}
 _db_mapping_service = None  # 延迟初始化
 
-# 当前请求上下文（每次请求由中间件更新）
-_current_db_config: Dict[str, Any] = {}
-_current_db_key: str = "default"
+# 当前请求上下文（使用 contextvars 实现协程级隔离，并发安全）
+# 每个 SSE 连接/请求有自己独立的上下文，不会互相覆盖
+_current_db_config: contextvars.ContextVar[Dict[str, Any]] = contextvars.ContextVar(
+    "current_db_config", default={}
+)
+_current_db_key: contextvars.ContextVar[str] = contextvars.ContextVar(
+    "current_db_key", default="default"
+)
 
 
 def _get_mapping_service():
@@ -99,11 +105,13 @@ def refresh_db_mapping() -> Dict[str, Dict[str, Any]]:
 # ---------- 当前请求上下文（中间件 / tool 使用） ----------
 
 def get_current_db_config() -> Dict[str, Any]:
-    return _current_db_config
+    """获取当前协程绑定的数据库配置（并发安全）"""
+    return _current_db_config.get()
 
 
 def get_current_db_key() -> str:
-    return _current_db_key
+    """获取当前协程绑定的数据库标识符（并发安全）"""
+    return _current_db_key.get()
 
 
 # ---------- MCP 实例 & 工具注册 ----------
@@ -174,24 +182,28 @@ async def lifespan(app):
 # ---------- 纯 ASGI 中间件：从 URL ?db= 解析数据库配置 ----------
 
 class DatabaseConfigMiddleware:
-    """纯 ASGI 中间件，从 query_string 中提取 db 参数并设置当前请求的数据库配置"""
+    """
+    纯 ASGI 中间件，从 query_string 中提取 db 参数并设置当前请求的数据库配置。
+    
+    使用 contextvars 实现协程级隔离：
+    - 每个 SSE 连接有独立的上下文，并发请求不会互相覆盖
+    - 即使两个客户端同时连接不同的 db，各自拿到的配置是正确的
+    """
 
     def __init__(self, app):
         self.app = app
 
     async def __call__(self, scope, receive, send):
-        global _current_db_config, _current_db_key
-
         if scope["type"] in ("http", "websocket"):
             qs = scope.get("query_string", b"").decode()
             if qs:
                 params = parse_qs(qs)
                 if "db" in params:
                     db_key = params["db"][0]
-                    _current_db_key = db_key
+                    _current_db_key.set(db_key)            # 只影响当前协程
                     db_config = get_db_config(db_key)
                     if db_config:
-                        _current_db_config = db_config
+                        _current_db_config.set(db_config)  # 只影响当前协程
                         logger.debug(f"数据库映射: {db_key}")
                     else:
                         logger.warning(f"未找到映射: {db_key}")
