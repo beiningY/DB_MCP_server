@@ -137,7 +137,7 @@ def search_knowledge_graph(
 
         # ========== 埋点：记录 API 错误 ==========
         try:
-            from db.analytics_config import log_tool_call
+            from db.analytics_config import log_tool_call, log_error
             log_tool_call(
                 tool_name="search_knowledge_graph",
                 tool_type="knowledge",
@@ -146,6 +146,14 @@ def search_knowledge_graph(
                 status="error",
                 error_message=f"HTTP {response.status_code}",
                 result_summary=error_result[:1000],
+            )
+            # 统一写入 error_log 表
+            log_error(
+                error_code=f"HTTP_{response.status_code}",
+                error_type="HTTPError",
+                error_message=f"LightRAG API 返回 HTTP {response.status_code}",
+                component="search_knowledge_graph",
+                function_name="search_knowledge_graph"
             )
         except ImportError:
             pass
@@ -162,7 +170,7 @@ def search_knowledge_graph(
 
         # ========== 埋点：记录连接错误 ==========
         try:
-            from db.analytics_config import log_tool_call
+            from db.analytics_config import log_tool_call, log_error
             log_tool_call(
                 tool_name="search_knowledge_graph",
                 tool_type="knowledge",
@@ -171,6 +179,14 @@ def search_knowledge_graph(
                 status="error",
                 error_message="ConnectionError",
                 result_summary=error_result[:1000],
+            )
+            # 统一写入 error_log 表
+            log_error(
+                error_code="CONNECTION_ERROR",
+                error_type="ConnectionError",
+                error_message=f"无法连接到 LightRAG 服务（{lightrag_url}）",
+                component="search_knowledge_graph",
+                function_name="search_knowledge_graph"
             )
         except ImportError:
             pass
@@ -187,7 +203,7 @@ def search_knowledge_graph(
 
         # ========== 埋点：记录超时 ==========
         try:
-            from db.analytics_config import log_tool_call
+            from db.analytics_config import log_tool_call, log_error
             log_tool_call(
                 tool_name="search_knowledge_graph",
                 tool_type="knowledge",
@@ -196,6 +212,14 @@ def search_knowledge_graph(
                 status="error",
                 error_message="Timeout",
                 result_summary=error_result[:1000],
+            )
+            # 统一写入 error_log 表
+            log_error(
+                error_code="TIMEOUT",
+                error_type="Timeout",
+                error_message="LightRAG 查询超时（600秒）",
+                component="search_knowledge_graph",
+                function_name="search_knowledge_graph"
             )
         except ImportError:
             pass
@@ -212,7 +236,7 @@ def search_knowledge_graph(
 
         # ========== 埋点：记录未知错误 ==========
         try:
-            from db.analytics_config import log_tool_call
+            from db.analytics_config import log_tool_call, log_error
             log_tool_call(
                 tool_name="search_knowledge_graph",
                 tool_type="knowledge",
@@ -221,6 +245,14 @@ def search_knowledge_graph(
                 status="error",
                 error_message=str(e)[:500],
                 result_summary=error_result[:1000],
+            )
+            # 统一写入 error_log 表
+            log_error(
+                error_code="UNKNOWN_ERROR",
+                error_type=type(e).__name__,
+                error_message=str(e)[:500],
+                component="search_knowledge_graph",
+                function_name="search_knowledge_graph"
             )
         except ImportError:
             pass

@@ -303,6 +303,19 @@ async def plan_step(state: PlanExecute):
         # ========== 日志：记录规划失败 ==========
         logger.error(f"[AGENT_PLAN_ERROR] error={str(e)}")
 
+        # ========== 埋点：记录错误到 error_log ==========
+        try:
+            from db.analytics_config import log_error
+            log_error(
+                error_code="PLAN_ERROR",
+                error_type=type(e).__name__,
+                error_message=str(e),
+                component="agent_planner",
+                function_name="plan_step"
+            )
+        except ImportError:
+            pass
+
         return {
             "plan": [],
             "step_index": 0,
@@ -430,6 +443,20 @@ async def replan_step(state: PlanExecute):
     except Exception as e:
         error_msg = f"[replanner] {type(e).__name__}: {str(e)}"
         logger.error(f"[AGENT_REPLAN_ERROR] error={str(e)}")
+
+        # ========== 埋点：记录错误到 error_log ==========
+        try:
+            from db.analytics_config import log_error
+            log_error(
+                error_code="REPLAN_ERROR",
+                error_type=type(e).__name__,
+                error_message=str(e),
+                component="agent_replanner",
+                function_name="replan_step"
+            )
+        except ImportError:
+            pass
+
         return {
             "response": _generate_fallback_response(
                 state,
@@ -524,6 +551,18 @@ async def run_agent(user_input: str, db_key: str = None) -> str:
 
     except GraphRecursionError:
         # 框架级安全阀，正常不会触发（MAX_ITERATIONS 会先拦截）
+        # ========== 埋点：记录错误到 error_log ==========
+        try:
+            from db.analytics_config import log_error
+            log_error(
+                error_code="RECURSION_LIMIT",
+                error_type="GraphRecursionError",
+                error_message=f"执行超过上限({MAX_ITERATIONS}轮)，已自动终止",
+                component="agent",
+                function_name="run_agent"
+            )
+        except ImportError:
+            pass
         return f"⚠️ 执行超过上限({MAX_ITERATIONS}轮)，已自动终止。请尝试简化问题后重新提问。"
 
 

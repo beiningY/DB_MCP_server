@@ -168,12 +168,36 @@ async def execute_sql_query(
             )
     except SQLValidationError as e:
         logger.warning(f"SQL 验证异常: {e.message}")
+        # ========== 埋点：记录错误到 error_log ==========
+        try:
+            from db.analytics_config import log_error
+            log_error(
+                error_code=ErrorCode.SQL_VALIDATION_ERROR,
+                error_type="SQLValidationError",
+                error_message=e.message,
+                component="execute_sql_query",
+                function_name="execute_sql_query"
+            )
+        except ImportError:
+            pass
         return format_error_response(
             f"SQL 验证异常: {e.message}",
             ErrorCode.SQL_VALIDATION_ERROR
         )
     except Exception as e:
         logger.error(f"SQL 验证器异常: {e}", exc_info=True)
+        # ========== 埋点：记录错误到 error_log ==========
+        try:
+            from db.analytics_config import log_error
+            log_error(
+                error_code=ErrorCode.UNKNOWN_ERROR,
+                error_type=type(e).__name__,
+                error_message=str(e),
+                component="execute_sql_query",
+                function_name="execute_sql_query"
+            )
+        except ImportError:
+            pass
         return format_error_response(
             "SQL 验证器异常",
             ErrorCode.UNKNOWN_ERROR
@@ -298,7 +322,7 @@ async def execute_sql_query(
 
         # ========== 埋点：记录工具调用失败 + SQL 查询失败 ==========
         try:
-            from db.analytics_config import log_tool_call, log_sql_query
+            from db.analytics_config import log_tool_call, log_sql_query, log_error
             log_tool_call(
                 tool_name="execute_sql_query",
                 tool_type="sql",
@@ -316,6 +340,14 @@ async def execute_sql_query(
                 error_message=error_msg[:500],
                 db_key=None,
                 database_name=database
+            )
+            # 统一写入 error_log 表
+            log_error(
+                error_code=ErrorCode.DB_QUERY_ERROR,
+                error_type=type(e).__name__,
+                error_message=error_msg[:500],
+                component="execute_sql_query",
+                function_name="execute_sql_query"
             )
         except ImportError:
             pass
@@ -348,7 +380,7 @@ async def execute_sql_query(
 
         # ========== 埋点：记录工具调用失败 ==========
         try:
-            from db.analytics_config import log_tool_call, log_sql_query
+            from db.analytics_config import log_tool_call, log_sql_query, log_error
             log_tool_call(
                 tool_name="execute_sql_query",
                 tool_type="sql",
@@ -366,6 +398,14 @@ async def execute_sql_query(
                 error_message=error_msg[:500],
                 db_key=None,
                 database_name=database
+            )
+            # 统一写入 error_log 表
+            log_error(
+                error_code=ErrorCode.UNKNOWN_ERROR,
+                error_type=type(e).__name__,
+                error_message=error_msg[:500],
+                component="execute_sql_query",
+                function_name="execute_sql_query"
             )
         except ImportError:
             pass

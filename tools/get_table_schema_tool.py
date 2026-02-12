@@ -222,7 +222,7 @@ async def get_table_schema(
 
         # ========== 埋点：记录工具调用失败 ==========
         try:
-            from db.analytics_config import log_tool_call
+            from db.analytics_config import log_tool_call, log_error
             log_tool_call(
                 tool_name="get_table_schema",
                 tool_type="schema",
@@ -232,6 +232,14 @@ async def get_table_schema(
                 error_message=error_msg[:500],
                 result_summary=error_result[:1000],
                 database_name=database
+            )
+            # 统一写入 error_log 表
+            log_error(
+                error_code=ErrorCode.DB_QUERY_ERROR,
+                error_type=type(e).__name__,
+                error_message=error_msg[:500],
+                component="get_table_schema",
+                function_name="get_table_schema"
             )
         except ImportError:
             pass
@@ -256,7 +264,7 @@ async def get_table_schema(
 
         # ========== 埋点：记录工具调用失败 ==========
         try:
-            from db.analytics_config import log_tool_call
+            from db.analytics_config import log_tool_call, log_error
             log_tool_call(
                 tool_name="get_table_schema",
                 tool_type="schema",
@@ -266,6 +274,14 @@ async def get_table_schema(
                 error_message=error_msg[:500],
                 result_summary=error_result[:1000],
                 database_name=database
+            )
+            # 统一写入 error_log 表
+            log_error(
+                error_code=ErrorCode.UNKNOWN_ERROR,
+                error_type=type(e).__name__,
+                error_message=error_msg[:500],
+                component="get_table_schema",
+                function_name="get_table_schema"
             )
         except ImportError:
             pass
