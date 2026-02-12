@@ -183,12 +183,23 @@ async def lifespan(app):
 
 class DatabaseConfigMiddleware:
     """
-    纯 ASGI 中间件，从 query_string 中提取 db 参数并设置当前请求的数据库配置。
-    
+    纯 ASGI 中间件，负责：
+    1. 从 query_string 中提取 db 参数并设置当前请求的数据库配置
+    2. SSE 连接建立时创建埋点 session，断开时关闭 session
+
+    去重机制（引用计数）：
+    - Cursor 等客户端会同时建立多条 SSE 连接（主连接 + 备用连接 + 重连）
+    - 同一客户端（ip + db_key）的所有 SSE 连接共享同一个 session
+    - 使用引用计数跟踪活跃连接数，最后一条连接断开时才关闭 session
+
     使用 contextvars 实现协程级隔离：
     - 每个 SSE 连接有独立的上下文，并发请求不会互相覆盖
-    - 即使两个客户端同时连接不同的 db，各自拿到的配置是正确的
+    - SSE 长连接期间，session_id 在协程 contextvars 中持续存在 
+    - 同一 SSE 连接内的所有工具调用共享同一个 session
     """
+
+    # 活跃 session 引用计数：{(client_ip, db_key): (session_id, ref_count)}
+    _active_sessions: Dict[tuple, list] = {}
 
     def __init__(self, app):
         self.app = app
@@ -196,6 +207,10 @@ class DatabaseConfigMiddleware:
     async def __call__(self, scope, receive, send):
         if scope["type"] in ("http", "websocket"):
             qs = scope.get("query_string", b"").decode()
+            path = scope.get("path", "")
+            db_key = None
+
+            # 解析 db 参数
             if qs:
                 params = parse_qs(qs)
                 if "db" in params:
@@ -208,7 +223,99 @@ class DatabaseConfigMiddleware:
                     else:
                         logger.warning(f"未找到映射: {db_key}")
 
+            # SSE 连接建立 → 获取或创建埋点 session（引用计数 +1）
+            if path == "/sse":
+                session_id, cache_key = self._acquire_session(scope, db_key)
+                try:
+                    await self.app(scope, receive, send)
+                finally:
+                    # SSE 断开 → 引用计数 -1，归零时关闭 session
+                    self._release_session(session_id, cache_key)
+                return
+
         await self.app(scope, receive, send)
+
+    def _acquire_session(self, scope, db_key: str) -> tuple:
+        """
+        获取或创建埋点会话（引用计数 +1）
+
+        同一客户端的多条 SSE 连接共享同一个 session，
+        通过引用计数确保最后一条连接断开时才关闭。
+
+        Returns:
+            (session_id, cache_key)
+        """
+        try:
+            from db.analytics_config import is_analytics_enabled, set_analytics_session_id
+            if not is_analytics_enabled():
+                return "", None
+
+            client = scope.get("client")
+            client_ip = client[0] if client else None
+            cache_key = (client_ip, db_key)
+
+            # 已有活跃 session → 引用计数 +1，直接复用
+            if cache_key in self._active_sessions:
+                entry = self._active_sessions[cache_key]
+                entry[1] += 1  # ref_count += 1
+                set_analytics_session_id(entry[0])
+                logger.info(
+                    f"埋点会话已复用: session={entry[0]}, db={db_key}, "
+                    f"ref_count={entry[1]}"
+                )
+                return entry[0], cache_key
+
+            # 无活跃 session → 创建新的
+            from db.analytics_service import get_analytics_service
+
+            headers = dict(scope.get("headers", []))
+            user_agent = headers.get(b"user-agent", b"").decode("utf-8", errors="ignore")
+
+            service = get_analytics_service()
+            session_id = service.create_session(
+                client_ip=client_ip,
+                user_agent=user_agent or None,
+                db_key=db_key
+            )
+            set_analytics_session_id(session_id)
+
+            # 初始引用计数 = 1
+            self._active_sessions[cache_key] = [session_id, 1]
+            logger.info(f"埋点会话已创建: session={session_id}, db={db_key}, ip={client_ip}")
+            return session_id, cache_key
+
+        except Exception as e:
+            logger.warning(f"创建埋点会话失败: {e}")
+            return "", None
+
+    def _release_session(self, session_id: str, cache_key: tuple):
+        """
+        释放埋点会话（引用计数 -1）
+
+        引用计数归零时关闭 session 并清理缓存。
+        """
+        if not session_id or not cache_key:
+            return
+
+        try:
+            entry = self._active_sessions.get(cache_key)
+            if not entry or entry[0] != session_id:
+                return
+
+            entry[1] -= 1  # ref_count -= 1
+            logger.debug(f"埋点会话释放: session={session_id}, ref_count={entry[1]}")
+
+            if entry[1] <= 0:
+                # 最后一条连接断开 → 关闭 session
+                del self._active_sessions[cache_key]
+
+                from db.analytics_service import get_analytics_service
+                service = get_analytics_service()
+                service.close_session(session_id)
+                logger.info(f"埋点会话已关闭: session={session_id}")
+
+        except Exception as e:
+            logger.warning(f"释放埋点会话失败: {e}")
 
 
 # ---------- Starlette 应用 ----------
@@ -234,7 +341,7 @@ def start_server():
     port = int(os.getenv("MCP_PORT", "8000"))
     workers = int(os.getenv("MCP_WORKERS", "1"))
 
-    print(f"""
+    logger.info(f"""
 {'=' * 45}
   DB Analysis MCP Server
 {'=' * 45}
@@ -253,6 +360,6 @@ def start_server():
         access_log=True,
         timeout_keep_alive=65,     # 保持连接超时（秒），略大于常见反代 60s
         timeout_graceful_shutdown=30,
-        limit_concurrency=200,     # 最大并发连接数
+        limit_concurrency=None,    # SSE 长连接场景不限制并发，避免连接耗尽导致 503 死循环
         limit_max_requests=10000,  # 单 worker 处理请求上限后自动重启（防内存泄漏）
     )

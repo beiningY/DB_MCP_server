@@ -5,6 +5,7 @@
 """
 
 import os
+import logging
 from typing import Optional, List, Dict, Any
 
 from dotenv import load_dotenv
@@ -16,6 +17,9 @@ from .models import Base, DBMapping
 
 # 加载环境变量
 load_dotenv()
+
+# 获取日志器
+logger = logging.getLogger("db.database")
 
 
 class DatabaseManager:
@@ -52,12 +56,12 @@ class DatabaseManager:
     def create_tables(self):
         """创建所有表"""
         Base.metadata.create_all(bind=self.engine)
-        print("数据库表创建成功")
+        logger.info("数据库表创建成功")
 
     def drop_tables(self):
         """删除所有表"""
         Base.metadata.drop_all(bind=self.engine)
-        print("数据库表删除成功")
+        logger.info("数据库表删除成功")
 
     def get_session(self) -> Session:
         """获取数据库会话"""

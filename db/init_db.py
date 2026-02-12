@@ -5,33 +5,52 @@
 """
 
 import os
+import logging
 from dotenv import load_dotenv
 
 from db.database import DatabaseManager, DBMappingService
 
+# 导入埋点模型，确保 create_tables() 会创建埋点表
+# 即使不使用埋点功能，也需要导入以创建表结构
+try:
+    from db.analytics_models import (
+        AgentExecutionLog,
+        ToolCallLog,
+        SQLQueryLog,
+        UserSessionLog,
+        KnowledgeGraphLog,
+        ErrorLog
+    )
+    _analytics_available = True
+except ImportError as e:
+    _analytics_available = False
+
 # 加载环境变量
 load_dotenv()
 
+# 获取日志器
+logger = logging.getLogger("db.init_db")
+
 
 def init_database():
-    """初始化数据库（创���表）"""
-    print("正在初始化数据库...")
+    """初始化数据库（创建表）"""
+    logger.info("正在初始化数据库...")
     db_manager = DatabaseManager()
     db_manager.create_tables()
-    print("数据库初始化完成！")
+    logger.info("数据库初始化完成！")
 
 
 def drop_database():
     """删除数据库表"""
-    print("正在删除数据库表...")
+    logger.info("正在删除数据库表...")
     db_manager = DatabaseManager()
     db_manager.drop_tables()
-    print("数据库表删除完成！")
+    logger.info("数据库表删除完成！")
 
 
 def insert_data():
     """插入数据"""
-    print("正在插入数据...")
+    logger.info("正在插入数据...")
 
     db_service = DBMappingService()
 
@@ -344,48 +363,47 @@ def insert_data():
     for data in data:
         try:
             mapping = db_service.create(**data)
-            print(f"  ✓ 创建: {mapping.db_name} -> {mapping.host}:{mapping.port}/{mapping.database}")
+            logger.info(f"创建映射: {mapping.db_name} -> {mapping.host}:{mapping.port}/{mapping.database}")
         except Exception as e:
-            print(f"  ✗ 失败: {data['db_name']} - {e}")
+            logger.error(f"创建映射失败: {data['db_name']} - {e}")
 
-    print("数据插入完成！")
+    logger.info("数据插入完成！")
 
 
 def query_all_data():
     """查询并显示所有数据"""
-    print("\n当前数据库映射记录：")
-    print("-" * 80)
+    logger.info("当前数据库映射记录：")
 
     db_service = DBMappingService()
     mappings = db_service.get_all()
 
     if not mappings:
-        print("（无记录）")
+        logger.info("（无记录）")
         return
 
     for m in mappings:
         status = "启用" if m.is_active else "禁用"
-        print(f"ID: {m.id}")
-        print(f"  名称: {m.db_name} ({status})")
-        print(f"  连接: {m.username}@{m.host}:{m.port}/{m.database}")
-        print(f"  类型: {m.db_type}")
-        print(f"  描述: {m.description or '无'}")
-        print(f"  创建时间: {m.created_at}")
-        print("-" * 80)
+        logger.info(f"ID: {m.id}, 名称: {m.db_name} ({status}), 连接: {m.username}@{m.host}:{m.port}/{m.database}")
 
 
 def get_mapping_dict():
-    """获取数据库映射字典（用于 server.py）"""
+    """获���数据库映射字典（用于 server.py）"""
     db_service = DBMappingService()
     mapping_dict = db_service.load_to_mapping_dict()
-    print("\n数据库映射字典（JSON 格式）：")
+    logger.info(f"数据库映射字典: {len(mapping_dict)} 条")
     import json
-    print(json.dumps(mapping_dict, indent=2, ensure_ascii=False))
+    logger.debug(json.dumps(mapping_dict, indent=2, ensure_ascii=False))
     return mapping_dict
 
 
 if __name__ == "__main__":
     import sys
+
+    # 配置基本日志
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    )
 
     if len(sys.argv) > 1:
         command = sys.argv[1]
@@ -404,19 +422,19 @@ if __name__ == "__main__":
             insert_data()
             query_all_data()
         else:
-            print("未知命令")
-            print("用法:")
-            print("  python init_db.py init    - 创建表")
-            print("  python init_db.py drop    - 删除表")
-            print("  python init_db.py data    - 插入数据")
-            print("  python init_db.py query   - 查询所有数据")
-            print("  python init_db.py mapping - 获取映射字典")
-            print("  python init_db.py all     - 初始化并插入示例数据")
+            logger.error("未知命令")
+            logger.info("用法:")
+            logger.info("  python init_db.py init    - 创建表")
+            logger.info("  python init_db.py drop    - 删除表")
+            logger.info("  python init_db.py data    - 插入数据")
+            logger.info("  python init_db.py query   - 查询所有数据")
+            logger.info("  python init_db.py mapping - 获取映射字典")
+            logger.info("  python init_db.py all     - 初始化并插入示例数据")
     else:
-        print("用法:")
-        print("  python init_db.py init    - 创建表")
-        print("  python init_db.py drop    - 删除表")
-        print("  python init_db.py data    - 插入数据")
-        print("  python init_db.py query   - 查询所有数据")
-        print("  python init_db.py mapping - 获取映射字典")
-        print("  python init_db.py all     - 初始化并插入示例数据")
+        logger.info("用法:")
+        logger.info("  python init_db.py init    - 创建表")
+        logger.info("  python init_db.py drop    - 删除表")
+        logger.info("  python init_db.py data    - 插入数据")
+        logger.info("  python init_db.py query   - 查询所有数据")
+        logger.info("  python init_db.py mapping - 获取映射字典")
+        logger.info("  python init_db.py all     - 初始化并插入示例数据")

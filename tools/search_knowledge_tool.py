@@ -5,6 +5,7 @@ LightRAG 知识图谱搜索工具
 
 import os
 import json
+import time
 import requests
 from typing import Optional, Literal
 from langchain_core.tools import tool
@@ -68,6 +69,8 @@ def search_knowledge_graph(
         # 注意：LightRAG API 可能不支持 top_k 参数，这里仅保留 query 和 mode
     }
     
+    start_time = time.time()
+    
     try:
         # 发送请求
         response = requests.post(
@@ -75,6 +78,8 @@ def search_knowledge_graph(
             json=payload,
             timeout=600
         )
+        
+        execution_time = (time.time() - start_time) * 1000
         
         # 检查响应状态
         if response.status_code == 200:
@@ -91,45 +96,133 @@ def search_knowledge_graph(
             else:
                 content = str(result_data)
             
-            return json.dumps({
+            result_str = json.dumps({
                 "success": True,
                 "results": content,
                 "mode": mode,
                 "top_k": top_k,
                 "message": "搜索成功"
             }, ensure_ascii=False)
+
+            # ========== 埋点：记录工具调用成功 ==========
+            try:
+                from db.analytics_config import log_tool_call
+                log_tool_call(
+                    tool_name="search_knowledge_graph",
+                    tool_type="knowledge",
+                    parameters={"query": query[:200], "mode": mode, "top_k": top_k},
+                    duration_ms=round(execution_time, 2),
+                    status="success",
+                    result_size_bytes=len(result_str.encode("utf-8")),
+                    result_summary=result_str[:1000],
+                )
+            except ImportError:
+                pass
+
+            return result_str
         
         elif response.status_code == 404:
-            return json.dumps({
+            error_result = json.dumps({
                 "success": False,
                 "message": f"LightRAG 服务未找到，请检查服务地址：{lightrag_url}",
                 "results": []
             }, ensure_ascii=False)
         
         else:
-            return json.dumps({
+            error_result = json.dumps({
                 "success": False,
                 "message": f"LightRAG API 返回错误：{response.status_code} - {response.text[:200]}",
                 "results": []
             }, ensure_ascii=False)
+
+        # ========== 埋点：记录 API 错误 ==========
+        try:
+            from db.analytics_config import log_tool_call
+            log_tool_call(
+                tool_name="search_knowledge_graph",
+                tool_type="knowledge",
+                parameters={"query": query[:200], "mode": mode, "top_k": top_k},
+                duration_ms=round(execution_time, 2),
+                status="error",
+                error_message=f"HTTP {response.status_code}",
+                result_summary=error_result[:1000],
+            )
+        except ImportError:
+            pass
+
+        return error_result
     
     except requests.exceptions.ConnectionError:
-        return json.dumps({
+        execution_time = (time.time() - start_time) * 1000
+        error_result = json.dumps({
             "success": False,
             "message": f"无法连接到 LightRAG 服务（{lightrag_url}），请确认服务是否启动",
             "results": []
         }, ensure_ascii=False)
+
+        # ========== 埋点：记录连接错误 ==========
+        try:
+            from db.analytics_config import log_tool_call
+            log_tool_call(
+                tool_name="search_knowledge_graph",
+                tool_type="knowledge",
+                parameters={"query": query[:200], "mode": mode},
+                duration_ms=round(execution_time, 2),
+                status="error",
+                error_message="ConnectionError",
+                result_summary=error_result[:1000],
+            )
+        except ImportError:
+            pass
+
+        return error_result
     
     except requests.exceptions.Timeout:
-        return json.dumps({
+        execution_time = (time.time() - start_time) * 1000
+        error_result = json.dumps({
             "success": False,
-            "message": "LightRAG 查询超时（30秒），请稍后重试",
+            "message": "LightRAG 查询超时（600秒），请稍后重试",
             "results": []
         }, ensure_ascii=False)
+
+        # ========== 埋点：记录超时 ==========
+        try:
+            from db.analytics_config import log_tool_call
+            log_tool_call(
+                tool_name="search_knowledge_graph",
+                tool_type="knowledge",
+                parameters={"query": query[:200], "mode": mode},
+                duration_ms=round(execution_time, 2),
+                status="error",
+                error_message="Timeout",
+                result_summary=error_result[:1000],
+            )
+        except ImportError:
+            pass
+
+        return error_result
     
     except Exception as e:
-        return json.dumps({
+        execution_time = (time.time() - start_time) * 1000
+        error_result = json.dumps({
             "success": False,
             "message": f"查询失败：{str(e)}",
             "results": []
         }, ensure_ascii=False)
+
+        # ========== 埋点：记录未知错误 ==========
+        try:
+            from db.analytics_config import log_tool_call
+            log_tool_call(
+                tool_name="search_knowledge_graph",
+                tool_type="knowledge",
+                parameters={"query": query[:200], "mode": mode},
+                duration_ms=round(execution_time, 2),
+                status="error",
+                error_message=str(e)[:500],
+                result_summary=error_result[:1000],
+            )
+        except ImportError:
+            pass
+
+        return error_result

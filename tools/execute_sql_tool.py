@@ -67,7 +67,7 @@ def _convert_value(value: Any) -> Any:
 @tool
 async def execute_sql_query(
     sql: str,
-    host: str,
+    host: str = "",
     port: int = 3306,
     username: str = "root",
     password: str = "",
@@ -83,10 +83,11 @@ async def execute_sql_query(
     - 使用异步连接池提高性能
     - 完整的错误处理和日志记录
     - 自动转换数据类型（Decimal、datetime 等）
+    - 支持从上下文自动获取数据库配置
 
     Args:
         sql: 要执行的 SQL 查询语句（仅支持 SELECT 查询）
-        host: 数据库主机地址（必需）
+        host: 数据库主机地址（可选，如不提供则从上下文获取）
         port: 数据库端口，默认 3306
         username: 数据库用户名，默认 "root"
         password: 数据库密码，默认 ""
@@ -106,6 +107,23 @@ async def execute_sql_query(
         >>> await execute_sql_query("SELECT * FROM users WHERE id = 1", host="localhost", database="mydb")
         >>> await execute_sql_query("SELECT COUNT(*) as cnt FROM orders", host="192.168.1.100", username="admin", password="pass123", database="shop", limit=1)
     """
+    # ========== 日志：记录工具调用开始 ==========
+    logger.info(f"[TOOL_CALL_START] execute_sql_query | sql={sql[:100]}{'...' if len(sql) > 100 else ''} | database={database}")
+
+    # ========== 0. 从上下文获取数据库配置（如果未提供） ==========
+    if not host:
+        try:
+            from tools import get_tool_db_config
+            db_config = get_tool_db_config()
+            if db_config.get("host"):
+                host = db_config.get("host")
+                port = db_config.get("port", port)
+                username = db_config.get("username", username)
+                password = db_config.get("password", password)
+                database = db_config.get("database", database)
+        except ImportError:
+            pass
+
     # ========== 1. 基本参数验证 ==========
     sql = sql.strip() if sql else ""
     if not sql:
@@ -118,7 +136,7 @@ async def execute_sql_query(
     if not host:
         logger.warning("缺少数据库主机地址")
         return format_error_response(
-            "数据库主机地址 (host) 不能为空",
+            "数据库主机地址 (host) 不能为空，且未从上下文获取到配置",
             ErrorCode.MISSING_REQUIRED_PARAM
         )
 
@@ -198,17 +216,67 @@ async def execute_sql_query(
             }
         )
 
-        # 返回成功响应
-        return format_success_response(
+        # 构建成功响应
+        result_str = format_success_response(
             data=data,
             columns=columns,
             message=f"查询成功，返回 {len(data)} 行数据",
             execution_time=round(execution_time, 2)
         )
 
+        # ========== 埋点：记录工具调用 + SQL 查询 ==========
+        try:
+            from db.analytics_config import log_tool_call, log_sql_query
+
+            # 简单判断查询类型
+            query_type = "simple"
+            sql_upper_check = sql.upper()
+            if " JOIN " in sql_upper_check:
+                query_type = "join"
+            elif " GROUP BY " in sql_upper_check:
+                query_type = "aggregation"
+            elif sql_upper_check.count(" SELECT") > 1:
+                query_type = "subquery"
+
+            # 记录到 tool_call_log（工具维度）
+            log_tool_call(
+                tool_name="execute_sql_query",
+                tool_type="sql",
+                parameters={"sql": sql[:500], "database": database},
+                duration_ms=round(execution_time, 2),
+                status="success",
+                result_row_count=len(data),
+                result_size_bytes=len(result_str.encode("utf-8")),
+                result_summary=result_str[:1000],
+                sql_executed=sql,
+                sql_execution_time_ms=round(execution_time, 2),
+                database_name=database
+            )
+
+            # 记录到 sql_query_log（SQL 维度）
+            log_sql_query(
+                sql_executed=sql,
+                query_type=query_type,
+                execution_time_ms=round(execution_time, 2),
+                rows_returned=len(data),
+                status="success",
+                db_key=None,
+                database_name=database
+            )
+        except ImportError:
+            pass
+
+        # ========== 日志：记录工具调用成功 ==========
+        # 获取结果预览（前200字符）
+        result_preview = result_str[:200].replace("\n", " ")
+        logger.info(f"[TOOL_CALL_SUCCESS] execute_sql_query | rows={len(data)} | duration={execution_time:.0f}ms | output_preview={result_preview}")
+
+        return result_str
+
     except SQLAlchemyError as e:
         # 数据库相关错误
         error_msg = str(e)
+        db_error_time = (time.time() - start_time) * 1000
         logger.error(
             f"数据库查询错误: {error_msg}",
             extra={
@@ -222,24 +290,45 @@ async def execute_sql_query(
         # 判断错误类型
         error_msg_lower = error_msg.lower()
         if "timeout" in error_msg_lower or "time" in error_msg_lower:
-            return format_error_response(
-                f"查询超时: {error_msg}",
-                ErrorCode.DB_TIMEOUT
-            )
+            error_result = format_error_response(f"查询超时: {error_msg}", ErrorCode.DB_TIMEOUT)
         elif "connection" in error_msg_lower:
-            return format_error_response(
-                f"数据库连接错误: {error_msg}",
-                ErrorCode.DB_CONNECTION_ERROR
-            )
+            error_result = format_error_response(f"数据库连接错误: {error_msg}", ErrorCode.DB_CONNECTION_ERROR)
         else:
-            return format_error_response(
-                f"SQL 执行错误: {error_msg}",
-                ErrorCode.DB_QUERY_ERROR
+            error_result = format_error_response(f"SQL 执行错误: {error_msg}", ErrorCode.DB_QUERY_ERROR)
+
+        # ========== 埋点：记录工具调用失败 + SQL 查询失败 ==========
+        try:
+            from db.analytics_config import log_tool_call, log_sql_query
+            log_tool_call(
+                tool_name="execute_sql_query",
+                tool_type="sql",
+                parameters={"sql": sql[:500], "database": database},
+                duration_ms=round(db_error_time, 2),
+                status="error",
+                error_message=error_msg[:500],
+                result_summary=error_result[:1000],
+                sql_executed=sql,
+                database_name=database
             )
+            log_sql_query(
+                sql_executed=sql,
+                status="error",
+                error_message=error_msg[:500],
+                db_key=None,
+                database_name=database
+            )
+        except ImportError:
+            pass
+
+        # ========== 日志：记录工具调用失败 ==========
+        logger.error(f"[TOOL_CALL_ERROR] execute_sql_query | error={error_msg[:100]}")
+
+        return error_result
 
     except Exception as e:
         # 其他未知错误
         error_msg = str(e)
+        unknown_error_time = (time.time() - start_time) * 1000
         logger.error(
             f"未知错误: {error_msg}",
             extra={
@@ -251,11 +340,40 @@ async def execute_sql_query(
             exc_info=True
         )
 
-        return format_error_response(
+        error_result = format_error_response(
             f"未知错误: {error_msg}",
             ErrorCode.UNKNOWN_ERROR,
             details={"type": type(e).__name__}
         )
+
+        # ========== 埋点：记录工具调用失败 ==========
+        try:
+            from db.analytics_config import log_tool_call, log_sql_query
+            log_tool_call(
+                tool_name="execute_sql_query",
+                tool_type="sql",
+                parameters={"sql": sql[:500], "database": database},
+                duration_ms=round(unknown_error_time, 2),
+                status="error",
+                error_message=error_msg[:500],
+                result_summary=error_result[:1000],
+                sql_executed=sql,
+                database_name=database
+            )
+            log_sql_query(
+                sql_executed=sql,
+                status="error",
+                error_message=error_msg[:500],
+                db_key=None,
+                database_name=database
+            )
+        except ImportError:
+            pass
+
+        # ========== 日志：记录工具调用失败 ==========
+        logger.error(f"[TOOL_CALL_ERROR] execute_sql_query | error={error_msg[:100]}")
+
+        return error_result
 
 
 # ============ 便捷函数 ============

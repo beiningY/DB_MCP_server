@@ -49,3 +49,19 @@ class DBMapping(Base):
 
     def __repr__(self):
         return f"<DBMapping(id={self.id}, db_name='{self.db_name}', host='{self.host}:{self.port}/{self.database}')>"
+
+
+# 导入埋点模型，确保它们被 SQLAlchemy 识别
+# 这样在调用 Base.metadata.create_all() 时会自动创建埋点表
+try:
+    from .analytics_models import (
+        AgentExecutionLog,
+        ToolCallLog,
+        SQLQueryLog,
+        UserSessionLog,
+        KnowledgeGraphLog,
+        ErrorLog
+    )
+    _analytics_models_imported = True
+except ImportError:
+    _analytics_models_imported = False

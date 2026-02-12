@@ -4,6 +4,7 @@
 集成异步连接池和统一错误处理
 """
 
+import time
 from typing import Optional
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
@@ -89,7 +90,7 @@ def format_table_info(
 @tool
 async def get_table_schema(
     table_name: Optional[str] = None,
-    host: str = "localhost",
+    host: str = "",
     port: int = 3306,
     username: str = "root",
     password: str = "",
@@ -98,6 +99,7 @@ async def get_table_schema(
     """
     获取数据库表的结构信息（字段、类型、注释等），返回易读的文本格式
     实时从 MySQL information_schema 查询，支持动态数据库连接
+    支持从上下文自动获取数据库配置
 
     功能特性：
     - 支持模糊匹配表名
@@ -110,7 +112,7 @@ async def get_table_schema(
         table_name: 表名。
             - 如果为 None：返回所有表的摘要列表
             - 如果指定表名：返回该表的详细结构（包含所有字段信息）
-        host: 数据库主机地址，默认 "localhost"
+        host: 数据库主机地址（可选，如不提供则从上下文获取）
         port: 数据库端口，默认 3306
         username: 数据库用户名，默认 "root"
         password: 数据库密码，默认 ""
@@ -126,25 +128,35 @@ async def get_table_schema(
         >>> await get_table_schema.invoke({"host": "localhost", "database": "mydb"})  # 获取所有表
         >>> await get_table_schema.invoke({"table_name": "users", "host": "localhost", "database": "mydb"})  # 获取指定表
     """
+    # ========== 0. 从上下文获取数据库配置（如果未提供） ==========
+    if not host:
+        try:
+            from tools import get_tool_db_config
+            db_config = get_tool_db_config()
+            if db_config.get("host"):
+                host = db_config.get("host")
+                port = db_config.get("port", port)
+                username = db_config.get("username", username)
+                password = db_config.get("password", password)
+                database = db_config.get("database", database)
+        except ImportError:
+            pass
+
     # ========== 1. 基本参数验证 ==========
     if not host:
         logger.warning("获取表结构时缺少主机地址")
         return format_error_response(
-            "数据库主机地址 (host) 不能为空",
+            "数据库主机地址 (host) 不能为空，且未从上下文获取到配置",
             ErrorCode.MISSING_REQUIRED_PARAM
         )
 
-    # 记录查询请求
-    logger.info(
-        f"获取表结构请求",
-        extra={
-            "host": host,
-            "database": database,
-            "table_name": table_name if table_name else "（所有表）"
-        }
-    )
+    # ========== 日志：记录工具调用开始 ==========
+    table_param = table_name if table_name else "(所有表)"
+    logger.info(f"[TOOL_CALL_START] get_table_schema | table={table_param} | database={database}")
 
     # ========== 2. 获取数据库连接（使用异步连接池） ==========
+    start_time = time.time()
+
     try:
         # 连接到 information_schema 查询元数据
         engine = await get_engine(
@@ -158,13 +170,38 @@ async def get_table_schema(
         async with engine.connect() as conn:
             # ========== 3. 如果未指定表名，返回所有表的摘要 ==========
             if not table_name:
-                return await _get_all_tables_summary(conn, database)
+                result_text = await _get_all_tables_summary(conn, database)
+            else:
+                # ========== 4. 查询指定表的详细结构 ==========
+                result_text = await _get_table_detail(conn, table_name, database)
 
-            # ========== 4. 查询指定表的详细结构 ==========
-            return await _get_table_detail(conn, table_name, database)
+        execution_time = (time.time() - start_time) * 1000
+
+        # ========== 埋点：记录工具调用成功 ==========
+        try:
+            from db.analytics_config import log_tool_call
+            log_tool_call(
+                tool_name="get_table_schema",
+                tool_type="schema",
+                parameters={"table_name": table_name, "database": database},
+                duration_ms=round(execution_time, 2),
+                status="success",
+                result_size_bytes=len(result_text.encode("utf-8")),
+                result_summary=result_text[:1000],
+                database_name=database
+            )
+        except ImportError:
+            pass
+
+        # ========== 日志：记录工具调用成功 ==========
+        result_preview = result_text[:200].replace("\n", " ")
+        logger.info(f"[TOOL_CALL_SUCCESS] get_table_schema | duration={execution_time:.0f}ms | output_preview={result_preview}")
+
+        return result_text
 
     except SQLAlchemyError as e:
         error_msg = str(e)
+        execution_time = (time.time() - start_time) * 1000
         logger.error(
             f"数据库查询错误: {error_msg}",
             extra={
@@ -179,18 +216,31 @@ async def get_table_schema(
         # 判断错误类型
         error_msg_lower = error_msg.lower()
         if "connection" in error_msg_lower:
-            return format_error_response(
-                f"数据库连接错误: {error_msg}",
-                ErrorCode.DB_CONNECTION_ERROR
-            )
+            error_result = format_error_response(f"数据库连接错误: {error_msg}", ErrorCode.DB_CONNECTION_ERROR)
         else:
-            return format_error_response(
-                f"数据库查询错误: {error_msg}",
-                ErrorCode.DB_QUERY_ERROR
+            error_result = format_error_response(f"数据库查询错误: {error_msg}", ErrorCode.DB_QUERY_ERROR)
+
+        # ========== 埋点：记录工具调用失败 ==========
+        try:
+            from db.analytics_config import log_tool_call
+            log_tool_call(
+                tool_name="get_table_schema",
+                tool_type="schema",
+                parameters={"table_name": table_name, "database": database},
+                duration_ms=round(execution_time, 2),
+                status="error",
+                error_message=error_msg[:500],
+                result_summary=error_result[:1000],
+                database_name=database
             )
+        except ImportError:
+            pass
+
+        return error_result
 
     except Exception as e:
         error_msg = str(e)
+        execution_time = (time.time() - start_time) * 1000
         logger.error(
             f"未知错误: {error_msg}",
             extra={
@@ -202,10 +252,25 @@ async def get_table_schema(
             exc_info=True
         )
 
-        return format_error_response(
-            f"未知错误: {error_msg}",
-            ErrorCode.UNKNOWN_ERROR
-        )
+        error_result = format_error_response(f"未知错误: {error_msg}", ErrorCode.UNKNOWN_ERROR)
+
+        # ========== 埋点：记录工具调用失败 ==========
+        try:
+            from db.analytics_config import log_tool_call
+            log_tool_call(
+                tool_name="get_table_schema",
+                tool_type="schema",
+                parameters={"table_name": table_name, "database": database},
+                duration_ms=round(execution_time, 2),
+                status="error",
+                error_message=error_msg[:500],
+                result_summary=error_result[:1000],
+                database_name=database
+            )
+        except ImportError:
+            pass
+
+        return error_result
 
 
 async def _get_all_tables_summary(conn, database: str) -> str:

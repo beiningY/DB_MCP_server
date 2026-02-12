@@ -8,12 +8,15 @@
 - 每个节点 try-except 错误处理
 - threading.Lock 线程安全延迟初始化
 - should_end 增加计划完成自动终止逻辑
+- 支持从上下文获取数据库配置，避免配置通过 LLM 传递导致丢失
 """
 
 import os
 import operator
 import threading
-from typing import Annotated, List, Tuple, Union
+import contextvars
+import logging
+from typing import Annotated, List, Tuple, Union, Dict, Any
 from typing_extensions import TypedDict
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field
@@ -23,11 +26,41 @@ from langgraph.graph import StateGraph, START, END
 from langgraph.errors import GraphRecursionError
 from langchain.agents import create_agent
 
+# 获取日志器
+logger = logging.getLogger("mcp.agent")
+
 
 load_dotenv()
 
 # 导入工具
-from tools import execute_sql_query, search_knowledge_graph, get_table_schema
+from tools import (
+    execute_sql_query,
+    search_knowledge_graph,
+    get_table_schema,
+    set_tool_db_key
+)
+
+
+# ============================================================================
+# 数据库标识符上下文（只存储 db_key，完整配置延迟加载）
+# ============================================================================
+
+# 当前请求的数据库标识符
+_agent_db_key: contextvars.ContextVar[str] = contextvars.ContextVar(
+    "agent_db_key", default=""
+)
+
+
+def set_agent_db_key(db_key: str) -> None:
+    """设置 agent 执行时的数据库标识符"""
+    _agent_db_key.set(db_key)
+    # 同时设置到工具层
+    set_tool_db_key(db_key)
+
+
+def get_agent_db_key() -> str:
+    """获取 agent 执行时的数据库标识符"""
+    return _agent_db_key.get()
 
 
 # ============= 常量 =============
@@ -85,11 +118,11 @@ planner_prompt = ChatPromptTemplate.from_messages([
 1. **get_table_schema** - 获取数据库表结构
    - 不带参数：获取所有表列表
    - 指定表名：获取该表的详细字段信息
-   
+
 2. **search_knowledge_graph** - 搜索知识图谱（历史 SQL、业务逻辑）
    - 查找相似的历史查询
    - 了解表和字段的业务含义
-   
+
 3. **execute_sql_query** - 执行 SQL 查询
    - 支持 SELECT 查询
    - 自动添加 LIMIT 保护
@@ -107,14 +140,8 @@ planner_prompt = ChatPromptTemplate.from_messages([
 - "执行 SQL: SELECT COUNT(*) FROM orders WHERE date = '2024-01-01'"
 
 ## 重要：输出格式
-你必须返回一个 JSON 对象，包含 steps 数组，每个元素是一个步骤的文字描述。
-注意：steps 是字符串数组，不是工具调用！
-
-正确示例：
-{{"steps": ["使用 get_table_schema 获取所有表列表", "根据表名查询相关数据"]}}
-
-错误示例（不要这样）：
-{{"tool": "get_table_schema", "args": []}}
+**只输出 JSON 对象，不要有任何其他文字！**
+直接输出：{{"steps": ["步骤1", "步骤2", ...]}}
 """),
     ("placeholder", "{messages}"),
 ])
@@ -253,16 +280,29 @@ def _generate_fallback_response(state: PlanExecute, reason: str = "") -> str:
 # ============= Workflow 节点 =============
 async def plan_step(state: PlanExecute):
     """规划步骤（带错误处理）"""
+    user_input = state["input"]
+
+    # ========== 日志：记录规划开始 ==========
+    logger.info(f"[AGENT_PLAN_START] input={user_input[:100]}{'...' if len(user_input) > 100 else ''}")
+
     try:
         plan = await get_planner().ainvoke(
-            {"messages": [("user", state["input"])]}
+            {"messages": [("user", user_input)]}
         )
+
+        # ========== 日志：记录规划完成 ==========
+        logger.info(f"[AGENT_PLAN_SUCCESS] steps={len(plan.steps)} | plan={plan.steps}")
+
         return {
             "plan": plan.steps,
             "step_index": 0,
         }
     except Exception as e:
         error_msg = f"[planner] {type(e).__name__}: {str(e)}"
+
+        # ========== 日志：记录规划失败 ==========
+        logger.error(f"[AGENT_PLAN_ERROR] error={str(e)}")
+
         return {
             "plan": [],
             "step_index": 0,
@@ -286,23 +326,59 @@ async def execute_step(state: PlanExecute):
     task = plan[step_index]
     plan_str = "\n".join(f"{i+1}. {step}" for i, step in enumerate(plan))
 
+    # ========== 日志：记录步骤开始 ==========
+    logger.info(f"[AGENT_STEP_START] step={step_index + 1}/{len(plan)} | task={task[:100]}")
+
+    # 简化的任务描述（不包含配置信息）
+    # 配置会通过 contextvar 传递，工具会自动获取
     task_formatted = f"""根据以下计划执行第 {step_index + 1} 步:
 {plan_str}
 
 当前任务（第 {step_index + 1}/{len(plan)} 步）: {task}
 
-请使用可用工具完成这个任务。"""
+请使用可用工具完成这个任务。
+注意：execute_sql_query 和 get_table_schema 工具会自动使用当前配置的数据库连接。
+"""
 
     try:
+        import time
+        step_start = time.time()
+
+        # 使用全局 executor（工具会自动从 contextvar 获取配置）
         agent_response = await get_agent_executor().ainvoke(
             {"messages": [("user", task_formatted)]}
         )
+
+        step_duration = (time.time() - step_start) * 1000
+        result_content = agent_response["messages"][-1].content
+
+        # ========== 日志：记录步骤完成 ==========
+        result_preview = result_content[:200].replace("\n", " ")
+        logger.info(f"[AGENT_STEP_SUCCESS] step={step_index + 1} | duration={step_duration:.0f}ms | output_preview={result_preview}")
+
         return {
-            "past_steps": [(task, agent_response["messages"][-1].content)],
+            "past_steps": [(task, result_content)],
             "step_index": step_index + 1,
         }
     except Exception as e:
         error_msg = f"[executor] step {step_index} ({task}): {type(e).__name__}: {str(e)}"
+
+        # ========== 日志：记录步骤失败 ==========
+        logger.error(f"[AGENT_STEP_ERROR] step={step_index + 1} | error={str(e)}")
+
+        # ========== 埋点：记录步骤失败 ==========
+        try:
+            from db.analytics_config import log_error
+            log_error(
+                error_code="EXEC_ERROR",
+                error_type=type(e).__name__,
+                error_message=str(e),
+                component="agent_executor",
+                function_name="execute_step"
+            )
+        except ImportError:
+            pass
+
         return {
             "past_steps": [(task, f"⚠️ 执行出错: {str(e)}")],
             "step_index": step_index + 1,  # 跳过失败步骤
@@ -316,8 +392,12 @@ async def replan_step(state: PlanExecute):
     step_index = state.get("step_index", 0)
     plan = state.get("plan", [])
 
+    # ========== 日志：记录重规划开始 ==========
+    logger.debug(f"[AGENT_REPLAN_START] step={step_index}/{len(plan)} | past_steps={len(past_steps)}")
+
     # 用 len(past_steps) 作为迭代计数，超限 → 生成兜底回答
     if len(past_steps) >= MAX_ITERATIONS:
+        logger.warning(f"[AGENT_MAX_ITERATIONS] reached {MAX_ITERATIONS}, generating fallback response")
         return {
             "response": _generate_fallback_response(
                 state,
@@ -337,12 +417,19 @@ async def replan_step(state: PlanExecute):
         output = await get_replanner().ainvoke(replan_input)
 
         if isinstance(output.action, Response):
+            # ========== 日志：记录任务完成 ==========
+            response_preview = output.action.response[:200].replace("\n", " ")
+            logger.info(f"[AGENT_COMPLETE] response_preview={response_preview}")
             return {"response": output.action.response}
         else:
-            return {"plan": output.action.steps, "step_index": 0}
+            # ========== 日志：记录新计划 ==========
+            new_steps = output.action.steps
+            logger.info(f"[AGENT_REPLAN] new_steps={len(new_steps)} | plan={new_steps}")
+            return {"plan": new_steps, "step_index": 0}
 
     except Exception as e:
         error_msg = f"[replanner] {type(e).__name__}: {str(e)}"
+        logger.error(f"[AGENT_REPLAN_ERROR] error={str(e)}")
         return {
             "response": _generate_fallback_response(
                 state,
@@ -408,19 +495,24 @@ app = workflow.compile()
 
 
 # ============= 对外接口 =============
-async def run_agent(user_input: str) -> str:
+async def run_agent(user_input: str, db_key: str = None) -> str:
     """
     运行 Agent 的统一入口。
-    
-    限制只有一个：MAX_ITERATIONS（最大执行轮数）。
+
+    限制只有一个：MAX_ITERATIONS（最大执��轮数）。
     LangGraph 的 recursion_limit 由它自动推导，作为框架级安全阀。
-    
+
     Args:
         user_input: 用户的自然语言输入
-    
+        db_config: 可选的数据库配置，如果提供则设置到上下文中
+
     Returns:
         Agent 的最终回答字符串
     """
+    # 设置数据库标识符到上下文（完整配置在工具调用时才查询）
+    if db_key:
+        set_agent_db_key(db_key)
+
     # recursion_limit 由 MAX_ITERATIONS 自动推导，无需单独配置
     # 公式：1(planner) + N × 2(agent + replan) + 余量
     config = {"recursion_limit": MAX_ITERATIONS * 2 + 10}
@@ -445,11 +537,11 @@ async def main():
         "MYSQL_PASSWORD: Root155017,MYSQL_PORT: 3306,MYSQL_USER: root)"
     )
 
-    print(f"配置: MAX_ITERATIONS={MAX_ITERATIONS}")
-    print("开始执行...\n")
+    logger.info(f"配置: MAX_ITERATIONS={MAX_ITERATIONS}")
+    logger.info("开始执行...")
 
     result = await run_agent(user_input)
-    print(f"\n=== 最终结果 ===\n{result}")
+    logger.info(f"最终结果: {result[:200]}...")  # 只记录前200个字符
 
 
 if __name__ == "__main__":
